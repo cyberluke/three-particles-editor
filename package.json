@@ -24,7 +24,7 @@
     "build:editor": "npm run smui-theme-light && npm run smui-theme-dark && rollup -c",
     "build": "npm run engine:build && npm run mirror && npm run build:editor",
     "dev": "npm run engine:build && npm run mirror && rollup -c -w",
-    "start": "sirv public --dev --no-clear --port 5173 --single",
+    "start": "sirv public --dev --no-clear --host 127.0.0.1 --port 5173 --single",
     "prepare": "husky",
     "smui-theme-light": "node scripts/compile-theme.js public/build/static/smui.css src/theme",
     "smui-theme-dark": "node scripts/compile-theme.js public/build/static/smui-dark.css src/theme --dark",

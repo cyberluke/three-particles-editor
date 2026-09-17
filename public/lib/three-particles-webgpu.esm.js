@@ -1,5 +1,5 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, min, float, max, floor as floor$1, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, atomicSub, instanceIndex, rand, sqrt, compute, numWorkgroups, atomicAdd, Loop, Continue, fract } from './three.tsl.js';
+import { Fn, min, float, max, floor, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, atomicSub, instanceIndex, rand, sqrt, compute, atomicAdd, Loop, Continue, fract } from './three.tsl.js';
 import * as THREE from './three.module.js';
 import { DoubleSide, Vector3, DataTexture } from './three.module.js';
 import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js';
@@ -615,7 +615,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       const ssize = mix(uSizeMin, uSizeMax, r4);
       const srot = mix(uRotMin, uRotMax, r3);
       sCol.element(slotIdx).assign(vec4(clR, clG, clB, opac));
-      const startFrame = tslFloor(mix(uFrMin, uFrMax, r1)).toVar();
+      const startFrame = floor(mix(uFrMin, uFrMax, r1)).toVar();
       sPS.element(slotIdx).assign(vec4(float(0), ssize, srot, startFrame));
       sSV.element(slotIdx).assign(vec4(slife, ssize, opac, clR));
       const rotSpeed = mix(uRotMin, uRotMax, r3);
@@ -623,7 +623,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       sOIA.element(slotIdx).assign(vec4(ox, oy.add(lenOffset), oz, float(1)));
     });
   });
-  const emitNode = compute(emitKernel(), numWorkgroups(uEmitCount));
+  const emitNode = compute(emitKernel(), maxParticles);
   const simKernel = Fn(() => {
     const i = instanceIndex;
     If(float(i).lessThan(float(maxParticles)), () => {
@@ -758,8 +758,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   };
 }
 function select01(kind, cone, sphere, planeVal) {
-  const isCone = tslFloor(kind).equals(float(0));
-  const isSph = tslFloor(kind).equals(float(1));
+  const isCone = floor(kind).equals(float(0));
+  const isSph = floor(kind).equals(float(1));
   const tmp = mix(cone, sphere, 0);
   isCone.toVar();
   const r = mix(planeVal, tmp, abs(isCone.sub(float(1))).min(abs(isSph.sub(float(1)))));
@@ -825,9 +825,6 @@ function fbm3(x0, y0, z0, offset) {
   v.assign(v.add(n1.mul(ampDec)));
   return v;
 }
-function floor(v) {
-  return tslFloor(v);
-}
 
 // src/js/effects/three-particles/three-particles-constants.ts
 var POINT_SIZE_SCALE = 100;
@@ -883,7 +880,7 @@ var computeFrameIndex = Fn(
     const lifePercent = min(vLifetime.div(vStartLifetime), float(1));
     const fpsBased = max(vLifetime.div(1e3).mul(uFps), float(0));
     const lifetimeBased = max(
-      min(floor$1(lifePercent.mul(totalFrames)), totalFrames.sub(1)),
+      min(floor(lifePercent.mul(totalFrames)), totalFrames.sub(1)),
       float(0)
     );
     const fpsResult = uFps.equal(0).select(float(0), fpsBased);
@@ -893,8 +890,8 @@ var computeFrameIndex = Fn(
 );
 var computeSpriteSheetUV = Fn(
   ({ baseUV, frameIndex, uTiles }) => {
-    const spriteX = floor$1(mod(frameIndex, uTiles.x));
-    const spriteY = floor$1(mod(frameIndex.div(uTiles.x), uTiles.y));
+    const spriteX = floor(mod(frameIndex, uTiles.x));
+    const spriteY = floor(mod(frameIndex.div(uTiles.x), uTiles.y));
     return vec2(
       baseUV.x.div(uTiles.x).add(spriteX.div(uTiles.x)),
       baseUV.y.div(uTiles.y).add(spriteY.div(uTiles.y))

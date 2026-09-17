@@ -911,7 +911,15 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     startOpacity: { value: 1 },
     startColor: { value: new THREE3.Color(1, 1, 1) },
     lifetime: { value: 0 },
-    color: { value: new THREE3.Color(1, 1, 1) }
+    color: { value: new THREE3.Color(1, 1, 1) },
+    // Sprite-sheet animation fields consumed by tsl-shared.createParticleUniforms.
+    fps: { value: normalizedConfig.textureSheetAnimation?.fps || 30 },
+    useFPSForFrameIndex: {
+      value: normalizedConfig.textureSheetAnimation?.timeMode === "FPS" /* FPS */
+    },
+    tiles: {
+      value: normalizedConfig.textureSheetAnimation?.tiles ?? new THREE3.Vector2(1, 1)
+    }
   };
   const bgCol = normalizedConfig.renderer.backgroundColor;
   sharedUniforms.backgroundColor.value.setRGB(bgCol.r ?? 1, bgCol.g ?? 1, bgCol.b ?? 1);
