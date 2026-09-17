@@ -1,7 +1,5 @@
-// examples.js ??? offline mirror of https://newkrok/three-particles/
-// three @0.182.0: `WebGPURenderer` lives under `three/webgpu`; use that
-// namespace for the example page (the plain `three` module does NOT
-// re-export it).
+// examples.js ??? offline mirror for @cyberluke/three-particles 4.0.0 (GPU-only).
+// Three.js r0.186 exposes `WebGPURenderer` under `three/webgpu`.
 
 import * as THREE from 'three/webgpu';
 import {
@@ -12,11 +10,11 @@ import {
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
 import { examples } from './lib/examples-data.js?v=5';
 
+// Version stamp comes straight from the built engine module.
 const verEl = document.getElementById('version-static');
 if (verEl) verEl.textContent = `v${REVISION} (local)`;
 
-// tiny clock ??? 3.js's `Clock` is in `three/core` and not re-exported by
-// `three.module.min.js`; we just need ms deltas.
+// ms-based clock shared by every per-card + expand stats line.
 function makeClock() {
   let last = performance.now();
   return {
@@ -31,39 +29,19 @@ function makeClock() {
 }
 const hasWebGPU = () => typeof navigator !== 'undefined' && !!navigator.gpu;
 
-// Upstream TEXTURE_MAP. Relative names match the 31 files in public/textures/.
+// Upstream TEXTURE_MAP: relative names match the 31 files in public/textures/.
 const TEXTURE_MAP = {
-  FLAME:            './textures/flame.webp',
-  CLOUD:            './textures/cloud.webp',
-  SNOWFLAKE:        './textures/snowflake.webp',
-  GRADIENT_POINT:   './textures/gradient-point.webp',
-  VORTEX:           './textures/vortex.webp',
-  STAR:             './textures/star.webp',
-  POINT:            './textures/point.webp',
-  PLUS_TOON:        './textures/plus-toon.webp',
-  SNOWFLAKE_DETAILED:'./textures/snowflake-detailed.webp',
-  SQUARE:           './textures/square.webp',
-  CIRCLE:           './textures/circle.webp',
-  LEAF_TOON:        './textures/leaf-toon.webp',
-  SKULL:            './textures/skull.webp',
-  ROCKS:            './textures/rocks.webp',
-  STARBURST:        './textures/starbust.webp',
-  SOFT_SMOKE:       './textures/soft-smoke.webp',
-  BUBBLES:          './textures/bubbles.webp',
-  FEATHER:          './textures/feather.webp',
-  FLARE:            './textures/flare.webp',
-  HEART:            './textures/heart.webp',
-  MOON:             './textures/moon.webp',
-  LIGHT_STREAK:     './textures/light-streak.webp',
-  RADIAL_BRUST:     './textures/radial-brust.webp',
-  RAINDROP:         './textures/raindrop.webp',
-  CONFETTI:         './textures/confetti.webp',
-  CONFETTI_TOON:    './textures/confetti-toon.webp',
-  NUMBERS:          './textures/numbers.webp',
-  NUMBERS_TOON:     './textures/numbers-toon.webp',
-  STAR_TOON:        './textures/star-toon.webp',
-  MAGIC_EXPLOSION:  './textures/magic-explosion.webp',
-  PLUS:             './textures/plus.webp',
+  FLAME:'./textures/flame.webp', CLOUD:'./textures/cloud.webp', SNOWFLAKE:'./textures/snowflake.webp',
+  GRADIENT_POINT:'./textures/gradient-point.webp', VORTEX:'./textures/vortex.webp', STAR:'./textures/star.webp',
+  POINT:'./textures/point.webp', PLUS_TOON:'./textures/plus-toon.webp', SNOWFLAKE_DETAILED:'./textures/snowflake-detailed.webp',
+  SQUARE:'./textures/square.webp', CIRCLE:'./textures/circle.webp', LEAF_TOON:'./textures/leaf-toon.webp',
+  SKULL:'./textures/skull.webp', ROCKS:'./textures/rocks.webp', STARBURST:'./textures/starbust.webp',
+  SOFT_SMOKE:'./textures/soft-smoke.webp', BUBBLES:'./textures/bubbles.webp', FEATHER:'./textures/feather.webp',
+  FLARE:'./textures/flare.webp', HEART:'./textures/heart.webp', MOON:'./textures/moon.webp',
+  LIGHT_STREAK:'./textures/light-streak.webp', RADIAL_BRUST:'./textures/radial-brust.webp',
+  RAINDROP:'./textures/raindrop.webp', CONFETTI:'./textures/confetti.webp', CONFETTI_TOON:'./textures/confetti-toon.webp',
+  NUMBERS:'./textures/numbers.webp', NUMBERS_TOON:'./textures/numbers-toon.webp', STAR_TOON:'./textures/star-toon.webp',
+  MAGIC_EXPLOSION:'./textures/magic-explosion.webp', PLUS:'./textures/plus.webp',
 };
 const textureLoader = new THREE.TextureLoader();
 const textureCache = {};
@@ -76,18 +54,15 @@ function loadTexture(id) {
   return tex;
 }
 
-// Upstream blending: JSON stores the string; the numeric THREE constant is needed by the material.
 function resolveBlending(v) {
   if (typeof v === 'number') return v;
-  if (v === 'THREE.AdditiveBlending')   return THREE.AdditiveBlending;
-  if (v === 'THREE.MultiplyBlending')   return THREE.MultiplyBlending;
-  if (v === 'THREE.SubtractiveBlending')return THREE.SubtractiveBlending;
+  if (v === 'THREE.AdditiveBlending')    return THREE.AdditiveBlending;
+  if (v === 'THREE.MultiplyBlending')    return THREE.MultiplyBlending;
+  if (v === 'THREE.SubtractiveBlending') return THREE.SubtractiveBlending;
   return THREE.NormalBlending;
 }
 
-// Upstream's RendererType.MESH geometry factories (10 kinds, from examples/main.js MESH_GEOMETRIES).
-// The examples-data.js only stores `meshType` as a string on the entry; the
-// library expects `renderer.mesh.geometry` to be a live THREE.BufferGeometry.
+// Upstream MESH geometry factories (10 kinds):
 const MESH_GEOMETRIES = {
   BOX:          () => new THREE.BoxGeometry(1, 1, 1),
   SPHERE:       () => new THREE.SphereGeometry(0.5, 12, 8),
@@ -100,21 +75,21 @@ const MESH_GEOMETRIES = {
   TORUS_KNOT:   () => new THREE.TorusKnotGeometry(0.3, 0.1, 32, 8),
   CYLINDER:     () => new THREE.CylinderGeometry(0.3, 0.3, 1, 8),
 };
-function prepareConfig(cfg0, textureId, meshType, forceGPU) {
+
+// ─── GPU-only prepareConfig ───
+// 4.x has a single backend: the engine itself rejects everything that isn't
+// the native WebGPU compute path, so `prepareConfig` never branches. POINTS
+// is promoted to INSTANCED because WGSL lacks gl_PointCoord.
+function prepareConfig(cfg0, textureId, meshType) {
   const cfg = JSON.parse(JSON.stringify(cfg0 || {}));
   delete cfg._editorData;
-  // Upstream: force CPU when no real WebGPU backend. The chip on the card
-  // shows the *requested* backend; `simulationBackend` is the *actual* one.
-  // GPU-only: 4.x rejects simulationBackend='CPU', so hard-set 'GPU' (no fallback).
-  cfg.simulationBackend = 'GPU';
   if (!cfg.renderer) cfg.renderer = {};
-  // POINTS relies on gl_PointCoord which is unsupported in WGSL ??? INSTANCED on WebGPU.
-  // WGSL has no gl_PointCoord; always promote POINTS ? INSTANCED.
-  { const rt = cfg.renderer.rendererType; if (!rt || rt === 'POINTS') cfg.renderer.rendererType = 'INSTANCED'; }
+  cfg.simulationBackend = 'GPU';
+  const rt = cfg.renderer.rendererType;
+  if (!rt || rt === 'POINTS') cfg.renderer.rendererType = 'INSTANCED';
   if (cfg.renderer.blending) cfg.renderer.blending = resolveBlending(cfg.renderer.blending);
   const tex = loadTexture(textureId);
   if (tex) cfg.map = tex;
-  // per-sub-emitter blending + texture
   if (cfg.subEmitters) {
     for (const sub of cfg.subEmitters) {
       if (sub.config?.renderer?.blending) sub.config.renderer.blending = resolveBlending(sub.config.renderer.blending);
@@ -125,15 +100,13 @@ function prepareConfig(cfg0, textureId, meshType, forceGPU) {
       }
     }
   }
-  // MESH geometry (TORUS, BOX, ???)
   if (meshType && MESH_GEOMETRIES[meshType]) {
-    cfg.renderer = cfg.renderer || {};
     cfg.renderer.mesh = { geometry: MESH_GEOMETRIES[meshType]() };
   }
   return cfg;
 }
 
-// per-card 3D state
+// ─── Per-card ctx map (one WebGPU renderer per visible card) ───
 const cards = new Map();
 let activeId = null, activeLoop = 0;
 
@@ -145,11 +118,8 @@ async function makeCtx(id, entry) {
   renderer.setSize(canvas.clientWidth || 300, canvas.clientHeight || 150, true);
   await renderer.init();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  // WebGPU registration must happen after init() with the live renderer so
-  // the engine can inspect `renderer.backend.isWebGPUBackend` and refuse to
-  // create a system under a WebGL2 fallback. No silent CPU path exists in 4.x.
+  // Registration must happen after `init()` against the live renderer.
   if (!enableWebGPU(renderer)) throw new Error('examples.html requires a native WebGPU compute backend');
-
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
   const ar = canvas.clientWidth / Math.max(1, canvas.clientHeight) || 1;
@@ -161,12 +131,7 @@ async function makeCtx(id, entry) {
   );
   plane.rotation.x = -Math.PI / 2;
   scene.add(plane);
-
-  // forceGPU = real WebGPU backend only. 3-particles takes the TSL branch
-  // because enableWebGPU() registered the factory; the CPU/GPU chip reflects
-  // the same rule the Svelte editor uses.
-  const isN = !!renderer.backend?.isWebGPUBackend;
-  const cfg = prepareConfig(entry.config, entry.textureId, entry.meshType, isN);
+  const cfg = prepareConfig(entry.config, entry.textureId, entry.meshType);
   if (!cfg.renderer) cfg.renderer = {};
   cfg.renderer.materialBackend = 'TSL';
   const system = createParticleSystem(cfg);
@@ -178,7 +143,11 @@ async function makeCtx(id, entry) {
 
 async function playCard(id) {
   let ctx = cards.get(id);
-  if (!ctx) { const e = examples.find((x) => x.id === id); if (!e) return; ctx = await makeCtx(id, e); }
+  if (!ctx) {
+    const e = examples.find((x) => x.id === id);
+    if (!e) return;
+    ctx = await makeCtx(id, e);
+  }
   if (!ctx) return;
   if (activeId && activeId !== id) {
     try { cards.get(activeId).renderer.setAnimationLoop(null); } catch {}
@@ -206,7 +175,7 @@ async function playCard(id) {
   activeLoop = requestAnimationFrame(step);
 }
 
-// --- expand modal (single reused renderer) --------------------------------
+// ─── Expand modal (one persistent WebGPU renderer reused across entries) ───
 const exp = { id: null, renderer: null, scene: null, camera: null, system: null, clock: null, paused: false, elapsed: 0, loop: 0, cfg: null };
 async function openExpand(id) {
   const entry = examples.find((e) => e.id === id);
@@ -232,7 +201,7 @@ async function openExpand(id) {
     cam.position.set(0, 0, 6);
     exp.scene = scene; exp.camera = cam;
   }
-  const cfg = prepareConfig(entry.config, entry.textureId, entry.meshType, !!exp.renderer.backend?.isWebGPUBackend);
+  const cfg = prepareConfig(entry.config, entry.textureId, entry.meshType);
   if (!cfg.renderer) cfg.renderer = {};
   cfg.renderer.materialBackend = 'TSL';
   try { exp.system?.dispose?.(); } catch {}
@@ -241,11 +210,8 @@ async function openExpand(id) {
   exp.scene.add(exp.system.instance);
   exp.clock = makeClock(); exp.elapsed = 0; exp.cfg = cfg;
   document.getElementById('expand-renderer-label').textContent = cfg.renderer.rendererType;
-  const isGPU = !!exp.system.computeNode;
-  document.getElementById('expand-backend-label').textContent = isGPU ? 'GPU' : 'CPU';
-  document.getElementById('expand-cpu-btn').classList.toggle('active', !isGPU);
-  document.getElementById('expand-gpu-btn').classList.toggle('active', isGPU);
-  document.getElementById('expand-gpu-btn').disabled = !isN || isN === null;
+  // 4.x is GPU-only; the single label is enough (no toggle).
+  document.getElementById('expand-backend-label').textContent = 'GPU';
   cancelAnimationFrame(exp.loop);
   const fEl = document.getElementById('expand-fps');
   const tEl = document.getElementById('expand-frametime');
@@ -254,8 +220,8 @@ async function openExpand(id) {
     if (!document.getElementById('expand-overlay').classList.contains('open')) return;
     const d = exp.clock.getDelta();
     exp.elapsed += d;
-      if (!exp.paused) {
-        updateParticleSystems({ now: Date.now(), delta: d, elapsed: exp.elapsed });
+    if (!exp.paused) {
+      updateParticleSystems({ now: Date.now(), delta: d, elapsed: exp.elapsed });
       if (exp.system.computeNode) exp.renderer.compute(exp.system.computeNode);
     }
     exp.renderer.render(exp.scene, exp.camera);
@@ -266,28 +232,13 @@ async function openExpand(id) {
   };
   exp.loop = requestAnimationFrame(loop);
 }
-function rebuildExpand(e, backend) {
-  if (!e.id) return;
-  const ent = examples.find((x) => x.id === e.id);
-  const cfg = prepareConfig(ent.config, ent.textureId, ent.meshType, backend === 'GPU' && !!e.renderer?.backend?.isWebGPUBackend);
-  if (!cfg.renderer) cfg.renderer = {};
-  cfg.renderer.materialBackend = 'TSL';
-  try { e.system?.dispose?.(); } catch {}
-  e.system = createParticleSystem(cfg);
-  while (e.scene.children.length > 1) e.scene.remove(e.scene.children[e.scene.children.length - 1]);
-  e.scene.add(e.system.instance);
-  document.getElementById('expand-backend-label').textContent = e.system.computeNode ? 'GPU' : 'CPU';
-  document.getElementById('expand-cpu-btn').classList.toggle('active', !e.system.computeNode);
-  document.getElementById('expand-gpu-btn').classList.toggle('active', !!e.system.computeNode);
-}
 
-// --- DOM builder ----------------------------------------------------------
+// ─── DOM builder per card ───
 function buildCard(entry) {
   const card = document.createElement('div');
   card.className = 'card'; card.dataset.name = entry.id;
   const wrap = document.createElement('div'); wrap.className = 'card-canvas-wrapper';
   const img = document.createElement('img'); img.className = 'preview-img';
-  // previews/ holds the 53 webp files taken from the upstream examples/previews/.
   img.src = `./previews/${entry.id}.webp`; img.alt = entry.title;
   img.onerror = () => img.remove();
   wrap.appendChild(img);
@@ -308,19 +259,8 @@ function buildCard(entry) {
   info.appendChild(tags);
 
   const ctrl = document.createElement('div'); ctrl.className = 'card-controls';
-  const tog = document.createElement('div'); tog.className = 'backend-toggle';
-  const cpuB = document.createElement('button'); cpuB.textContent = 'CPU'; cpuB.disabled = true;
-  const gpuB = document.createElement('button'); gpuB.textContent = 'GPU';
-  // initial active chip = config.simulationBackend ('AUTO' resolves to the
-// actual backend capability). Matches the 5 upstream cards' chip.
-  const native = hasWebGPU();
-  const sim = String(entry.config?.simulationBackend || 'AUTO').toUpperCase();
-  let active = 'CPU';
-  if (native && (sim === 'GPU' || sim === 'AUTO')) active = 'GPU';
-  if (!native) { gpuB.disabled = true; cpuB.classList.add('active'); }
-  else (active === 'GPU' ? gpuB : cpuB).classList.add('active');
-  tog.append(cpuB, gpuB);
-
+  const gpuChip = document.createElement('span');
+  gpuChip.className = 'tag'; gpuChip.textContent = hasWebGPU() ? 'GPU' : 'no WebGPU';
   const btns = document.createElement('div'); btns.className = 'card-btns';
   const ib = (svg, title) => { const b = document.createElement('button'); b.className = 'icon-btn'; b.title = title; b.innerHTML = svg; return b; };
   const pB = ib('<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20" fill="currentColor"/></svg>', 'Play');
@@ -338,17 +278,15 @@ function buildCard(entry) {
     a.download = `${entry.id}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href),100);
   });
   btns.append(pB, rB, eB, cB, dB);
-  ctrl.append(tog, btns); info.appendChild(ctrl); card.appendChild(info);
+  ctrl.append(gpuChip, btns); info.appendChild(ctrl); card.appendChild(info);
   return card;
 }
 
-// --- modal wiring ---------------------------------------------------------
+// ─── Modal wiring (no backend toggle; single GPU chip) ───
 document.getElementById('expand-close').addEventListener('click', () => {
   document.getElementById('expand-overlay').classList.remove('open');
   cancelAnimationFrame(exp.loop);
 });
-document.getElementById('expand-cpu-btn')?.addEventListener('click', () => rebuildExpand(exp, 'CPU'));
-document.getElementById('expand-gpu-btn')?.addEventListener('click', () => rebuildExpand(exp, 'GPU'));
 document.getElementById('expand-playpause-btn').addEventListener('click', () => (exp.paused = !exp.paused));
 document.getElementById('expand-restart-btn').addEventListener('click', () => (exp.elapsed = 0));
 document.getElementById('expand-copy-btn')?.addEventListener('click', async () => {
@@ -356,21 +294,26 @@ document.getElementById('expand-copy-btn')?.addEventListener('click', async () =
   if (e && navigator.clipboard) await navigator.clipboard.writeText(JSON.stringify(e.config, null, 2));
 });
 
+// ─── GPU-only benchmark (particle-count sweep) ───
 const bench = document.getElementById('bench-overlay');
 document.getElementById('bench-open-btn')?.addEventListener('click', (ev) => { ev.preventDefault(); bench.classList.add('open'); });
 document.getElementById('bench-close')?.addEventListener('click', () => bench.classList.remove('open'));
 document.getElementById('bench-abort').addEventListener('click', () => { const s = document.getElementById('bench-status'); if (s) s.textContent = 'aborted'; });
 const benchChart = document.getElementById('bench-chart');
 const benchStatus = document.getElementById('bench-status');
-async function benchRun(backend, iters = 30) {
+
+// Single-configuration (bubble-surface-pop) 30 measured frames, median per-frame ms.
+async function benchGpu(maxParticles, iters = 30) {
   const src = examples[0];
-  const cfg = prepareConfig(src.config, src.textureId, src.meshType, backend === 'GPU');
+  const cfg = prepareConfig(src.config, src.textureId, src.meshType);
+  cfg.maxParticles = maxParticles;
   if (!cfg.renderer) cfg.renderer = {};
   cfg.renderer.materialBackend = 'TSL';
   const rr = new THREE.WebGPURenderer({ antialias: true });
   rr.setSize(512, 288);
   await rr.init();
   rr.outputColorSpace = THREE.SRGBColorSpace;
+  if (!enableWebGPU(rr)) { rr.dispose?.(); throw new Error('native WebGPU backend required'); }
   const scene = new THREE.Scene();
   scene.add(new THREE.Mesh(
     new THREE.PlaneGeometry(20, 20, 4, 4),
@@ -379,15 +322,12 @@ async function benchRun(backend, iters = 30) {
   const cam = new THREE.PerspectiveCamera(45, 1, 1, 100); cam.position.set(0, 0, 6);
   const sys = createParticleSystem(cfg);
   scene.add(sys.instance);
-  // 2 warm-up iterations not counted (JIT upload + first GPU queue flush).
   const step = async () => {
     updateParticleSystems({ now: Date.now(), delta: 1 / 60, elapsed: 0 });
     if (sys.computeNode) await rr.compute(sys.computeNode);
     await rr.render(scene, cam);
   };
-  await step(); await step();
-  // Fixed-60 Hz delta per-frame timing; 3.js's async render is awaited so the
-  // number is the true end-of-frame delta instead of just the JS submit.
+  await step(); await step();      // 2 warm-up (JIT + first upload).
   const times = new Array(iters);
   for (let i = 0; i < iters; i++) {
     const t0 = performance.now();
@@ -397,9 +337,8 @@ async function benchRun(backend, iters = 30) {
   }
   times.sort((a, b) => a - b);
   const medianMs = times[times.length >> 1];
-  try { rr.dispose?.(); } catch {}
-  // fps per-median-frame, ms median, min/max for the table.
-  return { backend, fps: 1000 / Math.max(medianMs, 1e-3), medianMs, minMs: times[0], maxMs: times[times.length - 1] };
+  try { sys.dispose?.(); rr.dispose?.(); } catch {}
+  return { backend: `${(maxParticles / 1000).toFixed(0)}k`, fps: 1000 / Math.max(medianMs, 1e-3), medianMs, minMs: times[0], maxMs: times[times.length - 1] };
 }
 function drawBars(rs) {
   const ctx = benchChart.getContext('2d'); const W = benchChart.width, H = benchChart.height;
@@ -419,35 +358,30 @@ document.getElementById('bench-run').addEventListener('click', async () => {
   if (!benchStatus) return; benchStatus.textContent = 'running???';
   const rs = [];
   try {
-    rs.push(await benchRun('CPU', 30));
-    if (hasWebGPU()) rs.push(await benchRun('GPU', 30));
+    for (const N of [50_000, 100_000, 200_000, 500_000, 1_000_000]) {
+      rs.push(await benchGpu(N, 30));
+      benchStatus.textContent = rs.map((r) => `${r.backend}: ${r.fps.toFixed(0)} FPS (median ${r.medianMs.toFixed(2)} ms)`).join(' | ');
+    }
     drawBars(rs);
-    benchStatus.textContent = rs.map((r) => `${r.backend}: ${r.fps.toFixed(0)} FPS (median ${r.medianMs.toFixed(2)} ms)`).join(' | ');
   } catch (e) { benchStatus.textContent = 'error: ' + (e && e.message ? e.message : e); }
 });
 
-// 53 cards exactly like the upstream page.
+// ─── Grid + one-shot snapshot ───
 const grid = document.getElementById('examples-grid');
 for (const e of examples) grid.appendChild(buildCard(e));
 
-// ---- debug console: one-shot for all cards, then 1 Hz for whichever is active.
 function debugSnapshot(tag, ctx) {
   if (!ctx || !ctx.system || !ctx.system.instance) { console.warn(`[${tag}] no system`); return; }
   const geo = ctx.system.instance.geometry;
   const n = ctx.system.instance.instanceCount ?? geo?.instanceCount ?? 0;
-  // instanceColor is Float32Array(maxParticles*4); count a>0 to see alive ones.
   const col = geo && geo.getAttribute('instanceColor');
   let alive = 0, firstNonZero = null;
   if (col && col.array) {
     const a = col.array;
     for (let i = 0; i < n; i++) {
-      if (a[i * 4 + 3] > 0) {
-        alive++;
-        if (firstNonZero === null) firstNonZero = i;
-      }
+      if (a[i * 4 + 3] > 0) { alive++; if (firstNonZero === null) firstNonZero = i; }
     }
   }
-  // first 4 instanceOffset tuples for sanity
   const offs = geo && geo.getAttribute('instanceOffset');
   const off = offs && offs.array ? [ [+offs.array[0], +offs.array[1], +offs.array[2]],
     (+offs.array[3]||0)?[+offs.array[3],+offs.array[4],+offs.array[5]]:null,
@@ -463,11 +397,7 @@ function debugSnapshot(tag, ctx) {
       canvas: [ctx.renderer.domElement.width | 0, ctx.renderer.domElement.height | 0]
     });
 }
-// one-shot after first paint of each freshly created ctx:
-const _origMakeCtx = makeCtx;
-// run the same init then snapshot in a microtask so the geometry exists.
 setTimeout(() => {
   for (const [id, ctx] of cards.entries()) debugSnapshot('init', ctx);
   console.log(`grid cards: ${grid.children.length}`);
 }, 0);
-

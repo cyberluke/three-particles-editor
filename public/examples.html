@@ -98,7 +98,7 @@
     <div class="bench-modal">
       <button class="bench-close" id="bench-close">&times;</button>
       <h2>Performance Benchmark</h2>
-      <p>Compare CPU vs GPU compute on the first entry (bubble-surface-pop, 350-particle, sub-emitter + kill + noise). 2 warm-up + 30?? measured, per-frame median via <code>await renderer.render()</code>.</p>
+      <p>GPU-only particle-count sweep on the first entry (bubble-surface-pop, sub-emitter + kill + noise). 30 measured frames per N ??? 50k / 100k / 200k / 500k / 1M maxParticles, median per-frame ms via <code>await renderer.render()</code>.</p>
       <div class="bench-versions" id="bench-versions"></div>
       <div class="bench-actions">
         <button class="bench-btn" id="bench-run">Run benchmark</button>
@@ -116,10 +116,7 @@
       <div class="expand-header">
         <h2 id="expand-title"></h2>
         <div class="expand-controls">
-          <div class="backend-toggle">
-            <button id="expand-cpu-btn" class="active">CPU</button>
-            <button id="expand-gpu-btn">GPU</button>
-          </div>
+          <span class="tag">GPU</span>
           <button class="icon-btn" id="expand-playpause-btn" title="Pause / Play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
           <button class="icon-btn" id="expand-restart-btn" title="Restart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
           <button class="icon-btn" id="expand-copy-btn" title="Copy config JSON"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
