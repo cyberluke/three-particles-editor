@@ -194,6 +194,8 @@ let configDirty = false;
 let isInitializing = false;
 let webGPUAvailable = false;
 let diagnosticFrames = 0;
+let diagnosticDispatchBaseline = 0;
+let diagnosticGeneration = 0;
 let backendBadge: HTMLElement | null = null;
 
 // Snapshot of structural feature state captured at particle system creation time.
@@ -415,8 +417,8 @@ const animate = (): void => {
   updateWorld(softParticlesEnabled, particleSystemContainer, computeNode);
   if (++diagnosticFrames === 120) {
     console.log(
-      '[WebGPU proof] compute dispatches:',
-      getComputeDispatchCount()
+      '[WebGPU proof] compute dispatches (gen #' + diagnosticGeneration + '):',
+      getComputeDispatchCount() - diagnosticDispatchBaseline
     );
   }
   requestAnimationFrame(animate);
@@ -666,8 +668,14 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     computeNode: !!particleSystem.computeNode,
   });
   diagnosticFrames = 0;
+  diagnosticDispatchBaseline = getComputeDispatchCount();
+  const diagnosticGen = ++diagnosticGeneration;
   setTimeout(() => {
-    console.log('WebGPU compute dispatches after 2s:', getComputeDispatchCount());
+    if (diagnosticGen !== diagnosticGeneration) return;
+    console.log(
+      'WebGPU compute dispatches after 2s (gen #' + diagnosticGen + '):',
+      getComputeDispatchCount() - diagnosticDispatchBaseline
+    );
   }, 2000);
   particleSystemContainer.add(particleSystem.instance);
   configEntries.forEach(
