@@ -1,8 +1,8 @@
-import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, uniform, normalize, cameraPosition, cameraViewMatrix, mix, storage, instanceIndex, compute, fract, Loop, Continue } from 'three/tsl';
-import * as THREE from 'three';
-import { DoubleSide, Vector3, DataTexture } from 'three';
-import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from 'three/webgpu';
+import { registerTSLMaterialFactory } from './three-particles.esm.js';
+import { Fn, min, float, max, floor as floor$1, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, atomicSub, instanceIndex, rand, sqrt, compute, numWorkgroups, atomicAdd, Loop, Continue, fract } from './three.tsl.js';
+import * as THREE from './three.module.js';
+import { DoubleSide, Vector3, DataTexture } from './three.module.js';
+import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js';
 
 // src/webgpu.ts
 var PLANE_STRIDE = 12;
@@ -126,12 +126,14 @@ var createBezierCurveFunction = (particleSystemId, bezierPoints) => {
       if (percentage > 1) return bezierPoints[bezierPoints.length - 1].y;
       let start = 0;
       let stop = bezierPoints.length - 1;
-      bezierPoints.find((point, index) => {
-        const result = percentage < (point.percentage ?? 0);
-        if (result) stop = index;
-        else if (point.percentage !== void 0) start = index;
-        return result;
-      });
+      for (let i = 0; i < bezierPoints.length; i++) {
+        const point = bezierPoints[i];
+        if (percentage < (point.percentage ?? 0)) {
+          stop = i;
+          break;
+        }
+        if (point.percentage !== void 0) start = i;
+      }
       const n = stop - start;
       const calculatedPercentage = (percentage - (bezierPoints[start].percentage ?? 0)) / ((bezierPoints[stop].percentage ?? 1) - (bezierPoints[start].percentage ?? 0));
       let value = 0;
@@ -459,541 +461,282 @@ function bakeParticleSystemCurves(normalizedConfig, particleSystemId) {
     orbitalVelZ: orbitalVelZIdx
   };
 }
-var permute = Fn(({ x }) => {
-  return mod(x.mul(34).add(10).mul(x), float(289));
-});
-var taylorInvSqrt = Fn(({ r }) => {
-  return float(1.79284291400159).sub(float(0.85373472095314).mul(r));
-});
-var snoise3D = Fn(
-  ({ v }) => {
-    const ONE_THIRD = float(1 / 3);
-    const ONE_SIXTH = float(1 / 6);
-    const i = floor(
-      v.add(dot(v, vec3(ONE_THIRD, ONE_THIRD, ONE_THIRD)))
-    ).toVar();
-    const x0 = v.sub(i).add(dot(i, vec3(ONE_SIXTH, ONE_SIXTH, ONE_SIXTH))).toVar();
-    const g = step(x0.yzx, x0.xyz).toVar();
-    const l = float(1).sub(g).toVar();
-    const i1 = min(g.xyz, l.zxy).toVar();
-    const i2 = max(g.xyz, l.zxy).toVar();
-    const x1 = x0.sub(i1).add(ONE_SIXTH).toVar();
-    const x2 = x0.sub(i2).add(ONE_SIXTH.mul(2)).toVar();
-    const x3 = x0.sub(float(1)).add(ONE_SIXTH.mul(3)).toVar();
-    const iw = mod(i, float(289)).toVar();
-    const p0_yz = permute({
-      x: permute({
-        x: vec4(
-          vec2(iw.z, iw.z.add(i1.z)),
-          vec2(iw.z.add(i2.z), iw.z.add(1))
-        )
-      }).add(
-        vec4(vec2(iw.y, iw.y.add(i1.y)), vec2(iw.y.add(i2.y), iw.y.add(1)))
-      )
-    });
-    const p = permute({
-      x: p0_yz.add(
-        vec4(vec2(iw.x, iw.x.add(i1.x)), vec2(iw.x.add(i2.x), iw.x.add(1)))
-      )
-    });
-    const n_ = float(0.142857142857142);
-    const j = p.sub(float(49).mul(floor(p.mul(n_).mul(n_)))).toVar();
-    const x_ = floor(j.mul(n_)).toVar();
-    const y_ = floor(j.sub(float(7).mul(x_))).toVar();
-    const NS_X = float(0.285714285714286);
-    const NS_Y = float(-0.928571428571429);
-    const gx = x_.mul(NS_X).add(NS_Y);
-    const gy = y_.mul(NS_X).add(NS_Y);
-    const gz = float(1).sub(abs(gx)).sub(abs(gy)).toVar();
-    const gz_neg = step(gz, vec4(0));
-    const ox = gz_neg.mul(floor(gx).add(0.5));
-    const oy = gz_neg.mul(floor(gy).add(0.5));
-    const gx_final = gx.sub(ox);
-    const gy_final = gy.sub(oy);
-    const g0 = vec3(gx_final.x, gy_final.x, gz.x).toVar();
-    const g1 = vec3(gx_final.y, gy_final.y, gz.y).toVar();
-    const g2 = vec3(gx_final.z, gy_final.z, gz.z).toVar();
-    const g3 = vec3(gx_final.w, gy_final.w, gz.w).toVar();
-    const norm = taylorInvSqrt({
-      r: vec4(vec2(dot(g0, g0), dot(g1, g1)), vec2(dot(g2, g2), dot(g3, g3)))
-    });
-    g0.assign(g0.mul(norm.x));
-    g1.assign(g1.mul(norm.y));
-    g2.assign(g2.mul(norm.z));
-    g3.assign(g3.mul(norm.w));
-    const m = max(
-      vec4(
-        vec2(float(0.5).sub(dot(x0, x0)), float(0.5).sub(dot(x1, x1))),
-        vec2(float(0.5).sub(dot(x2, x2)), float(0.5).sub(dot(x3, x3)))
-      ),
-      float(0)
-    ).toVar();
-    const m2 = m.mul(m).toVar();
-    const m4 = m2.mul(m2).toVar();
-    const gdot = vec4(
-      vec2(dot(g0, x0), dot(g1, x1)),
-      vec2(dot(g2, x2), dot(g3, x3))
-    );
-    return float(42).mul(dot(m4, gdot));
-  }
-);
-Fn(
-  ({ t }) => {
-    const noiseX = snoise3D({ v: vec3(t, float(0), float(0)) });
-    const noiseY = snoise3D({ v: vec3(t, t, float(0)) });
-    const noiseZ = snoise3D({ v: vec3(t, t, t) });
-    return vec3(noiseX, noiseY, noiseZ);
-  }
-);
+
+// src/js/effects/three-particles/color-utils.ts
+var sRGBToLinear = (c) => c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 
 // src/js/effects/three-particles/webgpu/compute-modifiers.ts
-var INIT_STRIDE = 28;
 function createModifierStorageBuffers(maxParticles, instanced, curveData, hasForceFields = false, hasCollisionPlanes = false) {
   const Cls = instanced ? StorageInstancedBufferAttribute : StorageBufferAttribute;
   const curveLen = Math.max(curveData.length, 1);
   const ffSize = hasForceFields ? FORCE_FIELD_DATA_SIZE : 0;
   const cpSize = hasCollisionPlanes ? COLLISION_PLANE_DATA_SIZE : 0;
-  const totalLen = curveLen + maxParticles * INIT_STRIDE + ffSize + cpSize;
-  const combined = new Float32Array(totalLen);
-  combined.set(curveData.length > 0 ? curveData : new Float32Array([0]));
+  const freeListStart = curveLen + ffSize + cpSize;
+  const totalLen = freeListStart + maxParticles + 1;
+  const arr = new Float32Array(totalLen);
+  arr.set(curveData, 0);
+  arr[freeListStart] = maxParticles;
+  for (let i = 0; i < maxParticles; i++) arr[freeListStart + 1 + i] = i;
   return {
-    // Position and velocity use vec4 (w=padding) to avoid WebGPU vec3???vec4
-    // storage buffer alignment conversion that breaks itemSize-based type resolution.
-    position: new Cls(new Float32Array(maxParticles * 4), 4),
-    velocity: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
-    color: new Cls(new Float32Array(maxParticles * 4), 4),
-    // (lifetime, size, rotation, startFrame)
-    particleState: new Cls(new Float32Array(maxParticles * 4), 4),
-    // (startLifetime, startSize, startOpacity, startColorR)
-    startValues: new Cls(new Float32Array(maxParticles * 4), 4),
-    // (startColorG, startColorB, rotationSpeed, noiseOffset)
-    startColorsExt: new StorageBufferAttribute(
-      new Float32Array(maxParticles * 4),
-      4
-    ),
-    // (orbitalOffset.x, .y, .z, isActive)
-    orbitalIsActive: new StorageBufferAttribute(
-      new Float32Array(maxParticles * 4),
-      4
-    ),
-    // Curve data + emit queue tail (single buffer, 8th binding)
-    curveData: new StorageBufferAttribute(combined, 1)
+    buffers: {
+      position: new Cls(new Float32Array(maxParticles * 4), 4),
+      velocity: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
+      color: new Cls(new Float32Array(maxParticles * 4), 4),
+      particleState: new Cls(new Float32Array(maxParticles * 4), 4),
+      startValues: new Cls(new Float32Array(maxParticles * 4), 4),
+      startColorsExt: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
+      orbitalIsActive: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
+      curveData: new StorageBufferAttribute(arr, 1)
+    },
+    freeListOffset: freeListStart
   };
 }
-var _emitCounts = /* @__PURE__ */ new WeakMap();
-var _curveDataLengths = /* @__PURE__ */ new WeakMap();
-var _currentEmitIndices = /* @__PURE__ */ new WeakMap();
-var _previousEmitIndices = /* @__PURE__ */ new WeakMap();
-function writeParticleToModifierBuffers(buffers, index, data) {
-  const curveLen = _curveDataLengths.get(buffers.curveData) ?? 0;
-  const arr = buffers.curveData.array;
-  const base = curveLen + index * INIT_STRIDE;
-  arr[base] = data.position.x;
-  arr[base + 1] = data.position.y;
-  arr[base + 2] = data.position.z;
-  arr[base + 3] = 1;
-  arr[base + 4] = data.velocity.x;
-  arr[base + 5] = data.velocity.y;
-  arr[base + 6] = data.velocity.z;
-  arr[base + 7] = 0;
-  arr[base + 8] = data.colorR;
-  arr[base + 9] = data.colorG;
-  arr[base + 10] = data.colorB;
-  arr[base + 11] = data.colorA;
-  arr[base + 12] = 0;
-  arr[base + 13] = data.size;
-  arr[base + 14] = data.rotation;
-  arr[base + 15] = data.startFrame;
-  arr[base + 16] = data.orbitalOffset.x;
-  arr[base + 17] = data.orbitalOffset.y;
-  arr[base + 18] = data.orbitalOffset.z;
-  arr[base + 19] = 1;
-  arr[base + 20] = data.startLifetime;
-  arr[base + 21] = data.startSize;
-  arr[base + 22] = data.startOpacity;
-  arr[base + 23] = data.startColorR;
-  arr[base + 24] = data.startColorG;
-  arr[base + 25] = data.startColorB;
-  arr[base + 26] = data.rotationSpeed;
-  arr[base + 27] = data.noiseOffset;
-  _emitCounts.set(
-    buffers.curveData,
-    (_emitCounts.get(buffers.curveData) ?? 0) + 1
-  );
-  let indices = _currentEmitIndices.get(buffers.curveData);
-  if (!indices) {
-    indices = [];
-    _currentEmitIndices.set(buffers.curveData, indices);
-  }
-  indices.push(index);
-  const i4 = index * 4;
-  const svArr = buffers.startValues.array;
-  svArr[i4] = data.startLifetime;
-  svArr[i4 + 1] = data.startSize;
-  svArr[i4 + 2] = data.startOpacity;
-  svArr[i4 + 3] = data.startColorR;
-  const sceArr = buffers.startColorsExt.array;
-  sceArr[i4] = data.startColorG;
-  sceArr[i4 + 1] = data.startColorB;
-  sceArr[i4 + 2] = data.rotationSpeed;
-  sceArr[i4 + 3] = data.noiseOffset;
-}
-function registerCurveDataLength(buffers, curveDataLength) {
-  _curveDataLengths.set(buffers.curveData, curveDataLength);
-}
-function flushEmitQueue(buffers) {
-  const count = _emitCounts.get(buffers.curveData) ?? 0;
-  const curveLen = _curveDataLengths.get(buffers.curveData) ?? 0;
-  const arr = buffers.curveData.array;
-  const current = _currentEmitIndices.get(buffers.curveData);
-  const previous = _previousEmitIndices.get(buffers.curveData);
-  let clearedAny = false;
-  if (previous && previous.length > 0) {
-    const currentSet = current && current.length > 0 ? new Set(current) : null;
-    for (let i = 0; i < previous.length; i++) {
-      const p = previous[i];
-      if (!currentSet || !currentSet.has(p)) {
-        const flagOffset = curveLen + p * INIT_STRIDE + 3;
-        if (arr[flagOffset] > 0.5) {
-          arr[flagOffset] = 0;
-          buffers.curveData.addUpdateRange(flagOffset, 1);
-          clearedAny = true;
-        }
-      }
-    }
-  }
-  if (current && current.length > 0) {
-    for (let i = 0; i < current.length; i++) {
-      const p = current[i];
-      const slotStart = curveLen + p * INIT_STRIDE;
-      buffers.curveData.addUpdateRange(slotStart, INIT_STRIDE);
-    }
-  }
-  if (count > 0 || clearedAny) {
-    buffers.curveData.needsUpdate = true;
-  }
-  if (current && current.length > 0) {
-    let prevArr = _previousEmitIndices.get(buffers.curveData);
-    if (!prevArr) {
-      prevArr = [];
-      _previousEmitIndices.set(buffers.curveData, prevArr);
-    }
-    prevArr.length = current.length;
-    for (let i = 0; i < current.length; i++) {
-      prevArr[i] = current[i];
-    }
-    current.length = 0;
-  } else {
-    const prevArr = _previousEmitIndices.get(buffers.curveData);
-    if (prevArr) prevArr.length = 0;
-    if (current) current.length = 0;
-  }
-  _emitCounts.set(buffers.curveData, 0);
-  return count;
-}
-function deactivateParticleInModifierBuffers(buffers, index) {
-  const oiaArr = buffers.orbitalIsActive.array;
-  const oiaWOffset = index * 4 + 3;
-  if (oiaArr[oiaWOffset] !== 0) {
-    oiaArr[oiaWOffset] = 0;
-    buffers.orbitalIsActive.addUpdateRange(oiaWOffset, 1);
-    buffers.orbitalIsActive.needsUpdate = true;
-  }
-  const colorArr = buffers.color.array;
-  const colorAOffset = index * 4 + 3;
-  if (colorArr[colorAOffset] !== 0) {
-    colorArr[colorAOffset] = 0;
-    buffers.color.addUpdateRange(colorAOffset, 1);
-    buffers.color.needsUpdate = true;
-  }
-}
 function createCurveLookup(sCurveData) {
-  return Fn(
-    ({
-      curveIndex,
-      t
-    }) => {
-      const clamped = min(t, float(1));
-      const pos = clamped.mul(CURVE_RESOLUTION - 1);
-      const idx0 = floor(pos);
-      const f = fract(pos);
-      const base = curveIndex.mul(CURVE_RESOLUTION);
-      const v0 = sCurveData.element(base.add(idx0));
-      const v1 = sCurveData.element(
-        base.add(min(idx0.add(1), float(CURVE_RESOLUTION - 1)))
-      );
-      return mix(v0, v1, f);
-    }
-  );
+  return Fn(({ curveIndex, t }) => {
+    const clamped = min(t, float(1));
+    const pos = clamped.mul(CURVE_RESOLUTION - 1);
+    const idx0 = floor(pos);
+    const f = fract(pos);
+    const base = curveIndex.mul(CURVE_RESOLUTION);
+    const v0 = sCurveData.element(base.add(idx0));
+    const v1 = sCurveData.element(base.add(min(idx0.add(1), float(CURVE_RESOLUTION - 1))));
+    return mix(v0, v1, f);
+  });
 }
-function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, forceFieldCount = 0, collisionPlaneCount = 0) {
+function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, shapeParams, forceFieldCount = 0, collisionPlaneCount = 0, freeListStart = 0) {
   const uDelta = uniform(float(0));
   const uDeltaMs = uniform(float(0));
   const uGravityVelocity = uniform(new Vector3(0, 0, 0));
+  const uSeed = uniform(float(0));
+  const uEmitCount = uniform(int(0));
   const uNoiseStrength = uniform(float(0));
   const uNoisePower = uniform(float(0));
   const uNoiseFrequency = uniform(float(1));
   const uNoisePosAmount = uniform(float(0));
   const uNoiseRotAmount = uniform(float(0));
   const uNoiseSizeAmount = uniform(float(0));
-  const sPosition = storage(buffers.position, "vec4", maxParticles);
-  const sVelocity = storage(buffers.velocity, "vec4", maxParticles);
-  const sColor = storage(buffers.color, "vec4", maxParticles);
-  const sParticleState = storage(buffers.particleState, "vec4", maxParticles);
-  const sStartValues = storage(buffers.startValues, "vec4", maxParticles);
-  const sStartColorsExt = storage(buffers.startColorsExt, "vec4", maxParticles);
-  const sOrbitalIsActive = storage(
-    buffers.orbitalIsActive,
-    "vec4",
-    maxParticles
-  );
-  const sCurveData = storage(
-    buffers.curveData,
-    "float",
-    buffers.curveData.array.length
-  );
+  const shapeUniforms = {};
+  const sh = (name, v) => {
+    const u = uniform(float(v));
+    shapeUniforms[name] = u;
+    return u;
+  };
+  const uShape = sh("shapeKind", shapeParams.shapeKind);
+  const uRadius = sh("radius", shapeParams.radius);
+  const uLength = sh("length", shapeParams.length);
+  const uArc = sh("arc", shapeParams.arc);
+  const uSpreadX = sh("spreadX", shapeParams.spreadX);
+  const uSpreadY = sh("spreadY", shapeParams.spreadY);
+  const uSpreadZ = sh("spreadZ", shapeParams.spreadZ);
+  const uSpeedMin = sh("speedMin", shapeParams.speedMin);
+  const uSpeedMax = sh("speedMax", shapeParams.speedMax);
+  const uSizeMin = sh("sizeMin", shapeParams.sizeMin);
+  const uSizeMax = sh("sizeMax", shapeParams.sizeMax);
+  const uRotMin = sh("rotMin", shapeParams.rotMin);
+  const uRotMax = sh("rotMax", shapeParams.rotMax);
+  const uOpMin = sh("opacityMin", shapeParams.opacityMin);
+  const uOpMax = sh("opacityMax", shapeParams.opacityMax);
+  const uLifeMin = sh("lifeMin", shapeParams.lifeMin);
+  const uLifeMax = sh("lifeMax", shapeParams.lifeMax);
+  const uCRR = sh("colorRMin", sRGBToLinear(shapeParams.colorRMin));
+  const uCRX = sh("colorRMax", sRGBToLinear(shapeParams.colorRMax));
+  const uCGR = sh("colorGMin", sRGBToLinear(shapeParams.colorGMin));
+  const uCGX = sh("colorGMax", sRGBToLinear(shapeParams.colorGMax));
+  const uCBR = sh("colorBMin", sRGBToLinear(shapeParams.colorBMin));
+  const uCBX = sh("colorBMax", sRGBToLinear(shapeParams.colorBMax));
+  const uFrMin = sh("startFrameMin", shapeParams.startFrameMin);
+  const uFrMax = sh("startFrameMax", shapeParams.startFrameMax);
+  const sPos = storage(buffers.position, "vec4", maxParticles);
+  const sVel = storage(buffers.velocity, "vec4", maxParticles);
+  const sCol = storage(buffers.color, "vec4", maxParticles);
+  const sPS = storage(buffers.particleState, "vec4", maxParticles);
+  const sSV = storage(buffers.startValues, "vec4", maxParticles);
+  const sEx = storage(buffers.startColorsExt, "vec4", maxParticles);
+  const sOIA = storage(buffers.orbitalIsActive, "vec4", maxParticles);
+  const sCD = storage(buffers.curveData, "float", buffers.curveData.array.length);
   const curveLen = Math.max(curveMap.data.length, 1);
-  const lookupCurve = createCurveLookup(sCurveData);
-  const forceFieldOffset = curveLen + maxParticles * INIT_STRIDE;
-  const forceFieldNodes = flags.forceFields ? createForceFieldTSL(sCurveData, forceFieldOffset, forceFieldCount) : null;
-  const ffSize = flags.forceFields ? FORCE_FIELD_DATA_SIZE : 0;
-  const collisionPlaneOffset = forceFieldOffset + ffSize;
-  const collisionPlaneNodes = flags.collisionPlanes ? createCollisionPlaneTSL(
-    sCurveData,
-    collisionPlaneOffset,
-    collisionPlaneCount
-  ) : null;
-  const computeKernel = Fn(() => {
+  const forceFieldOffset = curveLen;
+  const collisionOffset = forceFieldOffset + (flags.forceFields ? FORCE_FIELD_DATA_SIZE : 0);
+  const flStart = freeListStart;
+  const ffNodes = flags.forceFields ? createForceFieldTSL(sCD, forceFieldOffset, forceFieldCount) : null;
+  const cpNodes = flags.collisionPlanes ? createCollisionPlaneTSL(sCD, collisionOffset, collisionPlaneCount) : null;
+  const lookupCurve = createCurveLookup(sCD);
+  const emitKernel = Fn(() => {
     const i = instanceIndex;
-    If(i.lessThan(float(maxParticles)), () => {
-      const initBase = i.mul(INIT_STRIDE).add(curveLen);
-      const initFlag = sCurveData.element(initBase.add(3));
-      If(initFlag.greaterThan(0.5), () => {
-        sPosition.element(i).assign(
-          vec4(
-            sCurveData.element(initBase),
-            sCurveData.element(initBase.add(1)),
-            sCurveData.element(initBase.add(2)),
-            0
-          )
-        );
-        sVelocity.element(i).assign(
-          vec4(
-            sCurveData.element(initBase.add(4)),
-            sCurveData.element(initBase.add(5)),
-            sCurveData.element(initBase.add(6)),
-            0
-          )
-        );
-        sColor.element(i).assign(
-          vec4(
-            sCurveData.element(initBase.add(8)),
-            sCurveData.element(initBase.add(9)),
-            sCurveData.element(initBase.add(10)),
-            sCurveData.element(initBase.add(11))
-          )
-        );
-        sParticleState.element(i).assign(
-          vec4(
-            sCurveData.element(initBase.add(12)),
-            sCurveData.element(initBase.add(13)),
-            sCurveData.element(initBase.add(14)),
-            sCurveData.element(initBase.add(15))
-          )
-        );
-        sOrbitalIsActive.element(i).assign(
-          vec4(
-            sCurveData.element(initBase.add(16)),
-            sCurveData.element(initBase.add(17)),
-            sCurveData.element(initBase.add(18)),
-            sCurveData.element(initBase.add(19))
-          )
-        );
-        sStartValues.element(i).assign(
-          vec4(
-            sCurveData.element(initBase.add(20)),
-            sCurveData.element(initBase.add(21)),
-            sCurveData.element(initBase.add(22)),
-            sCurveData.element(initBase.add(23))
-          )
-        );
-        sStartColorsExt.element(i).assign(
-          vec4(
-            sCurveData.element(initBase.add(24)),
-            sCurveData.element(initBase.add(25)),
-            sCurveData.element(initBase.add(26)),
-            sCurveData.element(initBase.add(27))
-          )
-        );
-        sCurveData.element(initBase.add(3)).assign(float(0));
-      });
-      const oiaVec = sOrbitalIsActive.element(i).toVar();
+    const oldTop = atomicSub(sCD.element(flStart), float(1)).toVar();
+    If(oldTop.greaterThan(float(0)), () => {
+      const slotIdx = sCD.element(flStart.add(oldTop)).toVar();
+      const base2 = i.mul(float(8));
+      const r0 = rand(uSeed.add(base2.add(float(0.13))));
+      const r1 = rand(uSeed.add(base2.add(float(1.17))));
+      const r2 = rand(uSeed.add(base2.add(float(2.23))));
+      const r3 = rand(uSeed.add(base2.add(float(3.31))));
+      const r4 = rand(uSeed.add(base2.add(float(4.37))));
+      const r5 = rand(uSeed.add(base2.add(float(5.41))));
+      const r6 = rand(uSeed.add(base2.add(float(6.47))));
+      const r7 = rand(uSeed.add(base2.add(float(7.53))));
+      const phi = r0.mul(float(6.2831853)).toVar();
+      const cosT = float(1).sub(r1.mul(float(2))).toVar();
+      const sinT = sqrt(float(1).sub(cosT.mul(cosT))).toVar();
+      const dx = sinT.mul(cos(phi));
+      const dy = cosT;
+      const dz = sinT.mul(sin(phi));
+      const kind = uShape;
+      const coneZ = float(1).sub(r1.mul(uArc).mul(float(0.3183098)));
+      const planeZ = float(1);
+      const dirX = select01(kind, dx, dx, float(0));
+      const dirY = select01(kind, dy, dy, float(0));
+      const dirZa = select01(kind, dz, dz, planeZ);
+      const coneX = dirX.mul(float(1));
+      const coneY = dirY.mul(float(1));
+      const coneZ2 = select01(kind, coneZ, dirZa, planeZ);
+      const dvx = select01(kind, coneX, dirX, coneX);
+      const dvy = select01(kind, coneY, dirY, coneY);
+      const dvz = select01(kind, coneZ2, coneZ2, planeZ);
+      const sdX = mix(dvx, float(0), uSpreadX);
+      const sdY = mix(dvy, float(1), uSpreadY);
+      const sdZ = mix(dvz, float(0), uSpreadZ);
+      const radial = r2.mul(uRadius);
+      const ox = sdX.mul(radial);
+      const oy = sdY.mul(radial);
+      const oz = sdZ.mul(radial);
+      const lenOffset = r3.sub(float(0.5)).mul(uLength);
+      sPos.element(slotIdx).assign(vec4(ox, oy.add(lenOffset), oz, float(0)));
+      const spMag = mix(uSpeedMin, uSpeedMax, r4).toVar();
+      const vxAbs = sdX.mul(spMag);
+      const vyAbs = sdY.mul(spMag);
+      const vzAbs = sdZ.mul(spMag);
+      sVel.element(slotIdx).assign(vec4(vxAbs, vyAbs, vzAbs, float(0)));
+      const clR = mix(uCRR, uCRX, r6);
+      const clG = mix(uCGR, uCGX, r6);
+      const clB = mix(uCBR, uCBX, r6);
+      const opac = mix(uOpMin, uOpMax, r7);
+      const slife = mix(uLifeMin, uLifeMax, r5).mul(float(1e3));
+      const ssize = mix(uSizeMin, uSizeMax, r4);
+      const srot = mix(uRotMin, uRotMax, r3);
+      sCol.element(slotIdx).assign(vec4(clR, clG, clB, opac));
+      const startFrame = tslFloor(mix(uFrMin, uFrMax, r1)).toVar();
+      sPS.element(slotIdx).assign(vec4(float(0), ssize, srot, startFrame));
+      sSV.element(slotIdx).assign(vec4(slife, ssize, opac, clR));
+      const rotSpeed = mix(uRotMin, uRotMax, r3);
+      sEx.element(slotIdx).assign(vec4(clG, clB, rotSpeed, r6.mul(float(100))));
+      sOIA.element(slotIdx).assign(vec4(ox, oy.add(lenOffset), oz, float(1)));
+    });
+  });
+  const emitNode = compute(emitKernel(), numWorkgroups(uEmitCount));
+  const simKernel = Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(maxParticles)), () => {
+      const oiaVec = sOIA.element(i).toVar();
       If(oiaVec.w.greaterThanEqual(float(0.5)), () => {
-        const pos = sPosition.element(i).xyz.toVar();
-        const vel = sVelocity.element(i).xyz.toVar();
-        const ps = sParticleState.element(i).toVar();
-        const sv = sStartValues.element(i);
-        ps.x;
+        const pos = sPos.element(i).xyz.toVar();
+        const vel = sVel.element(i).xyz.toVar();
+        const ps = sPS.element(i).toVar();
+        const sv = sSV.element(i);
+        const ex = sEx.element(i);
         const startLife = sv.x;
+        const life = ps.x;
+        const lifePct = min(life.div(startLife), float(1));
         vel.assign(vel.sub(vec3(uGravityVelocity).mul(uDelta)));
-        if (forceFieldNodes) {
-          forceFieldNodes.apply({ pos, vel, delta: uDelta });
-        }
+        if (ffNodes) ffNodes.apply({ pos, vel, delta: uDelta });
         pos.assign(pos.add(vel.mul(uDelta)));
-        if (collisionPlaneNodes) {
-          collisionPlaneNodes.apply({
-            pos,
-            vel,
-            oiaVec,
-            sColorNode: sColor,
-            ps,
-            startLife,
-            particleIdx: i,
-            sOrbitalIsActiveNode: sOrbitalIsActive
-          });
-        }
-        const lifePct = min(ps.x.div(startLife), float(1));
-        ps.x.assign(ps.x.add(uDeltaMs));
+        if (cpNodes) cpNodes.apply({
+          pos,
+          vel,
+          oiaVec,
+          sColorNode: sCol,
+          ps,
+          startLife,
+          particleIdx: i,
+          sOrbitalIsActiveNode: sOIA
+        });
         if (flags.linearVelocity) {
-          const lvx = curveMap.linearVelX >= 0 ? lookupCurve({
-            curveIndex: float(curveMap.linearVelX),
-            t: lifePct
-          }) : float(0);
-          const lvy = curveMap.linearVelY >= 0 ? lookupCurve({
-            curveIndex: float(curveMap.linearVelY),
-            t: lifePct
-          }) : float(0);
-          const lvz = curveMap.linearVelZ >= 0 ? lookupCurve({
-            curveIndex: float(curveMap.linearVelZ),
-            t: lifePct
-          }) : float(0);
+          const lvx = curveMap.linearVelX >= 0 ? lookupCurve({ curveIndex: float(curveMap.linearVelX), t: lifePct }) : float(0);
+          const lvy = curveMap.linearVelY >= 0 ? lookupCurve({ curveIndex: float(curveMap.linearVelY), t: lifePct }) : float(0);
+          const lvz = curveMap.linearVelZ >= 0 ? lookupCurve({ curveIndex: float(curveMap.linearVelZ), t: lifePct }) : float(0);
           pos.assign(pos.add(vec3(lvx, lvy, lvz).mul(uDelta)));
         }
-        if (flags.orbitalVelocity) {
+        if (flags.orbitalVelocity && (curveMap.orbitalVelX >= 0 || curveMap.orbitalVelY >= 0 || curveMap.orbitalVelZ >= 0)) {
           const offset = vec3(oiaVec.x, oiaVec.y, oiaVec.z).toVar();
           pos.assign(pos.sub(offset));
-          const ovx = curveMap.orbitalVelX >= 0 ? lookupCurve({
-            curveIndex: float(curveMap.orbitalVelX),
-            t: lifePct
-          }) : float(0);
-          const ovy = curveMap.orbitalVelY >= 0 ? lookupCurve({
-            curveIndex: float(curveMap.orbitalVelY),
-            t: lifePct
-          }) : float(0);
-          const ovz = curveMap.orbitalVelZ >= 0 ? lookupCurve({
-            curveIndex: float(curveMap.orbitalVelZ),
-            t: lifePct
-          }) : float(0);
-          const ax = ovx.mul(uDelta);
-          const ay = ovz.mul(uDelta);
-          const az = ovy.mul(uDelta);
-          const cosAz = cos(az);
-          const sinAz = sin(az);
-          const zx = offset.x.mul(cosAz).sub(offset.y.mul(sinAz));
-          const zy = offset.x.mul(sinAz).add(offset.y.mul(cosAz));
-          const zz = offset.z;
-          const cosAy = cos(ay);
-          const sinAy = sin(ay);
-          const yx = zx.mul(cosAy).add(zz.mul(sinAy));
-          const yy = zy;
-          const yz = zx.negate().mul(sinAy).add(zz.mul(cosAy));
-          const cosAx = cos(ax);
-          const sinAx = sin(ax);
-          const fx = yx;
-          const fy = yy.mul(cosAx).sub(yz.mul(sinAx));
-          const fz = yy.mul(sinAx).add(yz.mul(cosAx));
-          offset.assign(vec3(fx, fy, fz));
-          oiaVec.x.assign(offset.x);
-          oiaVec.y.assign(offset.y);
-          oiaVec.z.assign(offset.z);
-          pos.assign(pos.add(offset));
+          const ovx = curveMap.orbitalVelX >= 0 ? lookupCurve({ curveIndex: float(curveMap.orbitalVelX), t: lifePct }) : float(0);
+          const ovy = curveMap.orbitalVelY >= 0 ? lookupCurve({ curveIndex: float(curveMap.orbitalVelY), t: lifePct }) : float(0);
+          const ovz = curveMap.orbitalVelZ >= 0 ? lookupCurve({ curveIndex: float(curveMap.orbitalVelZ), t: lifePct }) : float(0);
+          const angX = ovx.mul(uDelta);
+          const angY = ovz.mul(uDelta);
+          const angZ = ovy.mul(uDelta);
+          const c1 = cos(angX), s1 = sin(angX);
+          const c2 = cos(angY), s2 = sin(angY);
+          const c3 = cos(angZ), s3 = sin(angZ);
+          const ny = offset.y.mul(c1).sub(offset.z.mul(s1));
+          const nz = offset.y.mul(s1).add(offset.z.mul(c1));
+          const nx1 = offset.x.mul(c2).add(nz.mul(s2));
+          const nz1 = offset.x.mul(s2).negate().add(nz.mul(c2));
+          const fx = nx1.mul(c3).sub(ny.mul(s3));
+          const fy = nx1.mul(s3).add(ny.mul(c3));
+          const fz = nz1;
+          pos.assign(pos.add(vec3(fx, fy, fz)));
+          oiaVec.assign(vec4(fx, fy, fz, oiaVec.w));
         }
-        if (flags.sizeOverLifetime && curveMap.sizeOverLifetime >= 0) {
-          const multiplier = lookupCurve({
-            curveIndex: float(curveMap.sizeOverLifetime),
-            t: lifePct
-          });
-          ps.y.assign(sv.y.mul(multiplier));
+        if (flags.sizeOverLifetime) {
+          const s = lookupCurve({ curveIndex: float(curveMap.sizeOverLifetime), t: lifePct });
+          ps.y.assign(s.mul(sv.y));
         }
-        if (flags.opacityOverLifetime && curveMap.opacityOverLifetime >= 0) {
-          const multiplier = lookupCurve({
-            curveIndex: float(curveMap.opacityOverLifetime),
-            t: lifePct
-          });
-          const col = sColor.element(i).toVar();
-          col.w.assign(sv.z.mul(multiplier));
-          sColor.element(i).assign(col);
+        if (flags.opacityOverLifetime) {
+          const op = lookupCurve({ curveIndex: float(curveMap.opacityOverLifetime), t: lifePct });
+          const col = sCol.element(i).toVar();
+          col.w.assign(op.mul(sv.z));
+          sCol.element(i).assign(col);
         }
         if (flags.colorOverLifetime) {
-          const col = sColor.element(i).toVar();
-          const sce = sStartColorsExt.element(i);
-          if (curveMap.colorR >= 0) {
-            const rMul = lookupCurve({
-              curveIndex: float(curveMap.colorR),
-              t: lifePct
-            });
-            col.x.assign(sv.w.mul(rMul));
-          }
-          if (curveMap.colorG >= 0) {
-            const gMul = lookupCurve({
-              curveIndex: float(curveMap.colorG),
-              t: lifePct
-            });
-            col.y.assign(sce.x.mul(gMul));
-          }
-          if (curveMap.colorB >= 0) {
-            const bMul = lookupCurve({
-              curveIndex: float(curveMap.colorB),
-              t: lifePct
-            });
-            col.z.assign(sce.y.mul(bMul));
-          }
-          sColor.element(i).assign(col);
+          const col = sCol.element(i).toVar();
+          const cr = lookupCurve({ curveIndex: float(curveMap.colorOverLifetimeR), t: lifePct }).mix(col.x, lifePct);
+          const cg = lookupCurve({ curveIndex: float(curveMap.colorOverLifetimeG), t: lifePct }).mix(col.y, lifePct);
+          const cb = lookupCurve({ curveIndex: float(curveMap.colorOverLifetimeB), t: lifePct }).mix(col.z, lifePct);
+          col.assign(vec4(cr, cg, cb, col.w));
+          sCol.element(i).assign(col);
         }
         if (flags.rotationOverLifetime) {
-          const sce = sStartColorsExt.element(i);
-          ps.z.assign(ps.z.add(sce.z.mul(uDelta).mul(float(0.02))));
+          ps.z.assign(ps.z.add(ex.z.mul(uDelta)));
         }
         if (flags.noise) {
-          const sce = sStartColorsExt.element(i);
-          const noisePos = lifePct.add(sce.w).mul(10).mul(uNoiseStrength).mul(uNoiseFrequency);
-          const noiseX = snoise3D({ v: vec3(noisePos, float(0), float(0)) });
-          const noiseY = snoise3D({
-            v: vec3(noisePos, noisePos, float(0))
+          const freq = uNoiseFrequency;
+          const p3 = pos.mul(freq);
+          const seed = ex.w;
+          const nx = fbm3(p3.x, p3.y, p3.z, seed);
+          const ny = fbm3(p3.y + float(31.41), p3.z - float(17.53), p3.x + float(23.07), seed);
+          const nz = fbm3(p3.z - float(51.07), p3.x + float(13.11), p3.y + float(41.79), seed);
+          const noiseVec = vec3(nx, ny, nz).mul(uNoisePower);
+          If(uNoisePosAmount.greaterThan(float(1e-3)), () => {
+            pos.assign(pos.add(noiseVec.mul(uNoisePosAmount)));
           });
-          const noiseZ = snoise3D({
-            v: vec3(noisePos, noisePos, noisePos)
+          If(uNoiseRotAmount.greaterThan(float(1e-3)), () => {
+            ps.z.assign(ps.z.add(nx.mul(uNoisePower).mul(uNoiseRotAmount)));
           });
-          pos.assign(
-            pos.add(
-              vec3(noiseX, noiseY, noiseZ).mul(uNoisePower).mul(uNoisePosAmount)
-            )
-          );
-          If(uNoiseRotAmount.greaterThan(1e-3), () => {
-            ps.z.assign(ps.z.add(noiseX.mul(uNoisePower).mul(uNoiseRotAmount)));
-          });
-          If(uNoiseSizeAmount.greaterThan(1e-3), () => {
-            ps.y.assign(
-              ps.y.add(noiseX.mul(uNoisePower).mul(uNoiseSizeAmount))
-            );
+          If(uNoiseSizeAmount.greaterThan(float(1e-3)), () => {
+            ps.y.assign(ps.y.add(nx.mul(uNoisePower).mul(uNoiseSizeAmount)));
           });
         }
-        sPosition.element(i).assign(vec4(pos, 0));
-        sVelocity.element(i).assign(vec4(vel, 0));
-        sParticleState.element(i).assign(ps);
-        sOrbitalIsActive.element(i).assign(oiaVec);
+        ps.x.assign(ps.x.add(uDeltaMs));
+        sPos.element(i).assign(vec4(pos, float(0)));
+        sVel.element(i).assign(vec4(vel, float(0)));
+        sPS.element(i).assign(ps);
+        sOIA.element(i).assign(oiaVec);
         If(ps.x.greaterThan(startLife), () => {
-          const deadOia = sOrbitalIsActive.element(i).toVar();
-          deadOia.w.assign(float(0));
-          sOrbitalIsActive.element(i).assign(deadOia);
-          sColor.element(i).assign(vec4(0));
+          const inactive = sOIA.element(i).toVar();
+          sOIA.element(i).assign(vec4(inactive.x, inactive.y, inactive.z, float(0)));
+          sCol.element(i).assign(vec4(float(0), float(0), float(0), float(0)));
+          const top = atomicAdd(sCD.element(flStart), float(1)).toVar();
+          sCD.element(flStart.add(top).add(float(1))).assign(float(i));
         });
       });
     });
   });
-  const computeNode = compute(computeKernel(), maxParticles);
+  const simNode = compute(simKernel(), maxParticles);
   return {
-    computeNode,
+    emitNode,
+    simNode,
+    computeNodes: [emitNode, simNode],
     uniforms: {
       delta: uDelta,
       deltaMs: uDeltaMs,
@@ -1003,21 +746,87 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, for
       noiseFrequency: uNoiseFrequency,
       noisePositionAmount: uNoisePosAmount,
       noiseRotationAmount: uNoiseRotAmount,
-      noiseSizeAmount: uNoiseSizeAmount
+      noiseSizeAmount: uNoiseSizeAmount,
+      emitCount: uEmitCount,
+      seed: uSeed
     },
+    shapeUniforms,
     buffers,
-    curveDataLength: curveLen,
-    /** Force field offset and count uniform (null if no force fields). */
-    forceFieldInfo: forceFieldNodes ? {
-      offset: forceFieldOffset,
-      countUniform: forceFieldNodes.countUniform
-    } : null,
-    /** Collision plane offset and count uniform (null if no collision planes). */
-    collisionPlaneInfo: collisionPlaneNodes ? {
-      offset: collisionPlaneOffset,
-      countUniform: collisionPlaneNodes.countUniform
-    } : null
+    freeListOffset: flStart,
+    forceFieldInfo: ffNodes ? { offset: forceFieldOffset, countUniform: ffNodes.countUniform } : null,
+    collisionPlaneInfo: cpNodes ? { offset: collisionOffset, countUniform: cpNodes.countUniform } : null
   };
+}
+function select01(kind, cone, sphere, planeVal) {
+  const isCone = tslFloor(kind).equals(float(0));
+  const isSph = tslFloor(kind).equals(float(1));
+  const tmp = mix(cone, sphere, 0);
+  isCone.toVar();
+  const r = mix(planeVal, tmp, abs(isCone.sub(float(1))).min(abs(isSph.sub(float(1)))));
+  return r;
+}
+function simplex3(xa, ya, za) {
+  const x = float(xa).toVar();
+  const y = float(ya).toVar();
+  const z = float(za).toVar();
+  const F = float(1).div(float(3));
+  const G = float(1).div(float(6));
+  const s = x.add(y).add(z).mul(F);
+  const i = floor(x.add(s));
+  const j = floor(y.add(s));
+  const k = floor(z.add(s));
+  const t = i.add(j).add(k).mul(G);
+  const X0 = i.sub(t);
+  const Y0 = j.sub(t);
+  const Z0 = k.sub(t);
+  const x0 = x.sub(X0);
+  const y0 = y.sub(Y0);
+  const z0 = z.sub(Z0);
+  const sel1a = x0.greaterThan(y0).toVar();
+  const sel1b = y0.greaterThan(z0).toVar();
+  let i1;
+  let j1;
+  let k1;
+  i1 = sel1a.greaterThan(float(0.5)).mul(float(1)).add(sel1a.lessThan(float(0.5)).sel(float(0), float(0)));
+  i1 = If(i1.greaterThan(float(0.5)), () => i1).sel(i1, float(0));
+  j1 = sel1b.greaterThan(float(0.5)).sel(float(1), float(0));
+  k1 = float(1).sub(i1).sub(j1);
+  const x1 = x0.sub(i1).add(float(1).div(float(3)));
+  const y1 = y0.sub(j1).add(float(1).div(float(3)));
+  const z1 = z0.sub(k1).add(float(1).div(float(3)));
+  const x2 = x0.sub(float(2).div(float(3))).add(i1.mul(float(2).div(float(3))));
+  const y2 = y0.sub(float(2).div(float(3))).add(j1.mul(float(2).div(float(3))));
+  const z2 = z0.sub(float(2).div(float(3))).add(k1.mul(float(2).div(float(3))));
+  const x3 = x0.sub(float(1)).add(float(1));
+  const y3 = y0.sub(float(1)).add(float(1));
+  const z3 = z0.sub(float(1)).add(float(1));
+  const n = (px, py, pz) => px.mul(px).add(py.mul(py)).add(pz.mul(pz));
+  const nn0 = max(float(0.6).sub(n(x0, y0, z0)), float(0));
+  const nn1 = max(float(0.6).sub(n(x1, y1, z1)), float(0));
+  const nn2 = max(float(0.6).sub(n(x2, y2, z2)), float(0));
+  const nn3 = max(float(0.6).sub(n(x3, y3, z3)), float(0));
+  const g = (xx, yy, zz, gx, gy, gz) => xx.mul(gx).add(yy.mul(gy)).add(zz.mul(gz)).mul(max(nn0, nn1).mul(max(nn2, nn3)));
+  const v = g(x0, y0, z0, 1, 0, 0).add(g(x1, y1, z1, -1, 1, 0)).add(g(x2, y2, z2, 0, -1, 1)).add(g(x3, y3, z3, 0, -1, 1));
+  return v.mul(float(2));
+}
+function fbm3(x0, y0, z0, offset) {
+  const nx = x0.add(offset);
+  const ny = y0.add(offset);
+  const nz = z0.add(offset);
+  const freq = float(0).toVar();
+  const amp = float(0).toVar();
+  const v = float(0).toVar();
+  float(2);
+  const ampDec = float(0.5);
+  const f1 = float(1);
+  freq.add(f1);
+  amp.add(ampDec);
+  const n1 = simplex3(nx.mul(f1), ny.mul(f1), nz.mul(f1));
+  v.assign(v.add(n1.mul(ampDec)));
+  return v;
+}
+function floor(v) {
+  return tslFloor(v);
 }
 
 // src/js/effects/three-particles/three-particles-constants.ts
@@ -1074,7 +883,7 @@ var computeFrameIndex = Fn(
     const lifePercent = min(vLifetime.div(vStartLifetime), float(1));
     const fpsBased = max(vLifetime.div(1e3).mul(uFps), float(0));
     const lifetimeBased = max(
-      min(floor(lifePercent.mul(totalFrames)), totalFrames.sub(1)),
+      min(floor$1(lifePercent.mul(totalFrames)), totalFrames.sub(1)),
       float(0)
     );
     const fpsResult = uFps.equal(0).select(float(0), fpsBased);
@@ -1084,8 +893,8 @@ var computeFrameIndex = Fn(
 );
 var computeSpriteSheetUV = Fn(
   ({ baseUV, frameIndex, uTiles }) => {
-    const spriteX = floor(mod(frameIndex, uTiles.x));
-    const spriteY = floor(mod(frameIndex.div(uTiles.x), uTiles.y));
+    const spriteX = floor$1(mod(frameIndex, uTiles.x));
+    const spriteY = floor$1(mod(frameIndex.div(uTiles.x), uTiles.y));
     return vec2(
       baseUV.x.div(uTiles.x).add(spriteX.div(uTiles.x)),
       baseUV.y.div(uTiles.y).add(spriteY.div(uTiles.y))
@@ -1592,47 +1401,93 @@ function createTrailRibbonTSLMaterial(trailUniforms, rendererConfig) {
 function createTSLParticleMaterial(rendererType, sharedUniforms, rendererConfig, gpuCompute = false) {
   switch (rendererType) {
     case "INSTANCED" /* INSTANCED */:
-      return createInstancedBillboardTSLMaterial(
-        sharedUniforms,
-        rendererConfig,
-        gpuCompute
-      );
+      return createInstancedBillboardTSLMaterial(sharedUniforms, rendererConfig, gpuCompute);
     case "MESH" /* MESH */:
-      return createMeshParticleTSLMaterial(
-        sharedUniforms,
-        rendererConfig,
-        gpuCompute
-      );
+      return createMeshParticleTSLMaterial(sharedUniforms, rendererConfig, gpuCompute);
     case "POINTS" /* POINTS */:
     default:
-      return createPointSpriteTSLMaterial(
-        sharedUniforms,
-        rendererConfig,
-        gpuCompute
-      );
+      return createPointSpriteTSLMaterial(sharedUniforms, rendererConfig, gpuCompute);
   }
 }
 function createTSLTrailMaterial(trailUniforms, rendererConfig) {
   return createTrailRibbonTSLMaterial(trailUniforms, rendererConfig);
 }
+var pair = (v) => {
+  if (typeof v === "number") return [v, v];
+  if (v && typeof v === "object") {
+    const o = v;
+    return [Number(o.min) || 0, Number(o.max) || 0];
+  }
+  return [0, 0];
+};
+var shapeKind = (t) => {
+  switch (t) {
+    case "SPHERE":
+      return 1;
+    case "CONE":
+    default:
+      return 0;
+  }
+};
 function createComputePipeline(maxParticles, instanced, normalizedConfig, particleSystemId, forceFieldCount, collisionPlaneCount = 0) {
-  const bakedCurves = bakeParticleSystemCurves(
-    normalizedConfig,
-    particleSystemId
-  );
-  const { velocityOverLifetime } = normalizedConfig;
+  const bakedCurves = bakeParticleSystemCurves(normalizedConfig, particleSystemId);
+  const v = normalizedConfig.velocityOverLifetime;
   const flags = {
     sizeOverLifetime: normalizedConfig.sizeOverLifetime.isActive,
     opacityOverLifetime: normalizedConfig.opacityOverLifetime.isActive,
     colorOverLifetime: normalizedConfig.colorOverLifetime.isActive,
     rotationOverLifetime: normalizedConfig.rotationOverLifetime.isActive,
-    linearVelocity: velocityOverLifetime.isActive && (isLifeTimeCurve(velocityOverLifetime.linear.x ?? 0) || isLifeTimeCurve(velocityOverLifetime.linear.y ?? 0) || isLifeTimeCurve(velocityOverLifetime.linear.z ?? 0) || velocityOverLifetime.linear.x !== 0 || velocityOverLifetime.linear.y !== 0 || velocityOverLifetime.linear.z !== 0),
-    orbitalVelocity: velocityOverLifetime.isActive && (isLifeTimeCurve(velocityOverLifetime.orbital.x ?? 0) || isLifeTimeCurve(velocityOverLifetime.orbital.y ?? 0) || isLifeTimeCurve(velocityOverLifetime.orbital.z ?? 0) || velocityOverLifetime.orbital.x !== 0 || velocityOverLifetime.orbital.y !== 0 || velocityOverLifetime.orbital.z !== 0),
+    linearVelocity: v.isActive && (isLifeTimeCurve(v.linear.x ?? 0) || isLifeTimeCurve(v.linear.y ?? 0) || isLifeTimeCurve(v.linear.z ?? 0) || v.linear.x !== 0 || v.linear.y !== 0 || v.linear.z !== 0),
+    orbitalVelocity: v.isActive && (isLifeTimeCurve(v.orbital.x ?? 0) || isLifeTimeCurve(v.orbital.y ?? 0) || isLifeTimeCurve(v.orbital.z ?? 0) || v.orbital.x !== 0 || v.orbital.y !== 0 || v.orbital.z !== 0),
     noise: normalizedConfig.noise.isActive,
     forceFields: forceFieldCount > 0,
     collisionPlanes: collisionPlaneCount > 0
   };
-  const buffers = createModifierStorageBuffers(
+  const [lifeMin, lifeMax] = pair(normalizedConfig.startLifetime);
+  const [spdMin, spdMax] = pair(normalizedConfig.startSpeed);
+  const [szMin, szMax] = pair(normalizedConfig.startSize);
+  const [rotMin, rotMax] = pair(normalizedConfig.startRotation);
+  const [opMin, opMax] = pair(normalizedConfig.startOpacity);
+  const cMin = normalizedConfig.startColor.min || { r: 1, g: 1, b: 1 };
+  const cMax = normalizedConfig.startColor.max || { r: 1, g: 1, b: 1 };
+  const sf = normalizedConfig.textureSheetAnimation && normalizedConfig.textureSheetAnimation.startFrame || 0;
+  const sfPair = pair(sf);
+  const shp = normalizedConfig.shape;
+  const shapeParams = {
+    shapeKind: shapeKind(shp.shapeType),
+    radius: shp.radius ?? 1,
+    length: shp.length ?? 0,
+    arc: shp.arc ?? 360,
+    spreadX: shp.spreadX ?? 0,
+    spreadY: shp.spreadY ?? 0,
+    spreadZ: shp.spreadZ ?? 0,
+    speedMin: spdMin,
+    speedMax: spdMax,
+    sizeMin: szMin,
+    sizeMax: szMax,
+    rotMin,
+    rotMax,
+    opacityMin: opMin,
+    opacityMax: opMax,
+    lifeMin,
+    lifeMax,
+    colorRMin: cMin.r,
+    colorRMax: cMax.r,
+    colorGMin: cMin.g,
+    colorGMax: cMax.g,
+    colorBMin: cMin.b,
+    colorBMax: cMax.b,
+    startFrameMin: sfPair[0],
+    startFrameMax: sfPair[1],
+    rotationCurveActive: normalizedConfig.rotationOverLifetime.isActive,
+    rotationalXCurve: bakedCurves.orbitalVelX ?? -1,
+    rotationalYCurve: bakedCurves.orbitalVelY ?? -1,
+    rotationalZCurve: bakedCurves.orbitalVelZ ?? -1,
+    linearXCurve: bakedCurves.linearVelX ?? -1,
+    linearYCurve: bakedCurves.linearVelY ?? -1,
+    linearZCurve: bakedCurves.linearVelZ ?? -1
+  };
+  const built = createModifierStorageBuffers(
     maxParticles,
     instanced,
     bakedCurves.data,
@@ -1640,31 +1495,32 @@ function createComputePipeline(maxParticles, instanced, normalizedConfig, partic
     flags.collisionPlanes
   );
   return createModifierComputeUpdate(
-    buffers,
+    built.buffers,
     maxParticles,
     bakedCurves,
     flags,
+    shapeParams,
     forceFieldCount,
-    collisionPlaneCount
+    collisionPlaneCount,
+    built.freeListOffset
   );
 }
 
 // src/webgpu.ts
-function enableWebGPU() {
+function enableWebGPU(renderer) {
   const factory = {
     createTSLParticleMaterial,
     createTSLTrailMaterial,
     createComputePipeline,
-    writeParticleToModifierBuffers,
-    deactivateParticleInModifierBuffers,
-    flushEmitQueue,
-    registerCurveDataLength,
     encodeForceFieldsForGPU,
     encodeCollisionPlanesForGPU
   };
-  registerTSLMaterialFactory(factory);
+  return registerTSLMaterialFactory(
+    factory,
+    renderer !== void 0 ? { renderer } : void 0
+  );
 }
 
-export { createComputePipeline, createTSLParticleMaterial, createTSLTrailMaterial, deactivateParticleInModifierBuffers, enableWebGPU, encodeCollisionPlanesForGPU, encodeForceFieldsForGPU, flushEmitQueue, registerCurveDataLength, writeParticleToModifierBuffers };
+export { createComputePipeline, createTSLParticleMaterial, createTSLTrailMaterial, enableWebGPU, encodeCollisionPlanesForGPU, encodeForceFieldsForGPU };
 //# sourceMappingURL=webgpu.js.map
 //# sourceMappingURL=webgpu.js.map

@@ -1,4 +1,4 @@
-﻿import * as THREE from 'three';
+import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -79,10 +79,13 @@ export const updateWorld = (
   particleContainer?: THREE.Object3D,
   computeNode?: unknown
 ): void => {
-  // Dispatch GPU compute for WebGPU particle simulation
+  // Dispatch GPU compute for WebGPU particle simulation. The three-particles
+  // GPU-only kernel returns an ordered [emitNode, simNode] pair; Three.js
+  // natively expands `Node[]` into the same `computeList` order as variadic
+  // `renderer.compute(a, b)`, so one call already covers both kernels.
   if (computeNode) {
     (renderer as any).compute(computeNode);
-    computeDispatchCount++;
+    computeDispatchCount += Array.isArray(computeNode) ? (computeNode as unknown[]).length : 1;
   }
 
   if (softParticlesEnabled && depthRenderTarget) {
@@ -130,12 +133,12 @@ export const getDepthTexture = (): THREE.DepthTexture | null =>
 
 // Two independent capabilities reported by the *actual* live renderer.
 // They are intentionally NOT one-and-the-same; each drives a different config field:
-//  - `isUsingNodeMaterials()` â€” drives the **material** path (TSL `NodeMaterial`
+//  - `isUsingNodeMaterials()` ??? drives the **material** path (TSL `NodeMaterial`
 //    vs legacy `ShaderMaterial`). True for both the WebGPU backend AND its
 //    WebGL2 fallback, because both process TSL `NodeMaterial`s (via WGSL /
 //    GLSL node builders).
-//  - `isWebGPUBackend()` â€” drives the **compute** path. `true` only for
-//    `WebGPUBackend` (native WebGPU) â€” `WebGLBackend` (fallback) does not set
+//  - `isWebGPUBackend()` ??? drives the **compute** path. `true` only for
+//    `WebGPUBackend` (native WebGPU) ??? `WebGLBackend` (fallback) does not set
 //    `isWebGPUBackend` on itself.
 export const isUsingNodeMaterials = (): boolean =>
   (renderer as unknown as { isWebGPURenderer?: boolean } | undefined)?.isWebGPURenderer === true;

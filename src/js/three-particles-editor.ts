@@ -666,6 +666,11 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     enableWebGPU: webGPUAvailable,
     requestedBackend: convertedConfig.simulationBackend,
     computeNode: !!particleSystem.computeNode,
+    computeNodeCount: Array.isArray(particleSystem.computeNode)
+      ? (particleSystem.computeNode as unknown[]).length
+      : particleSystem.computeNode
+        ? 1
+        : 0,
   });
   diagnosticFrames = 0;
   diagnosticDispatchBaseline = getComputeDispatchCount();
