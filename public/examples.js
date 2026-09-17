@@ -10,9 +10,8 @@ import {
   updateParticleSystems,
 } from '@cyberluke/three-particles';
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
-import { examples } from './lib/examples-data.js?v=4';
+import { examples } from './lib/examples-data.js?v=5';
 
-enableWebGPU();
 const verEl = document.getElementById('version-static');
 if (verEl) verEl.textContent = `v${REVISION} (local)`;
 
@@ -106,18 +105,12 @@ function prepareConfig(cfg0, textureId, meshType, forceGPU) {
   delete cfg._editorData;
   // Upstream: force CPU when no real WebGPU backend. The chip on the card
   // shows the *requested* backend; `simulationBackend` is the *actual* one.
-  if (!forceGPU) cfg.simulationBackend = 'CPU';
-  else if (cfg.simulationBackend == null) cfg.simulationBackend = 'GPU';
+  // GPU-only: 4.x rejects simulationBackend='CPU', so hard-set 'GPU' (no fallback).
+  cfg.simulationBackend = 'GPU';
   if (!cfg.renderer) cfg.renderer = {};
   // POINTS relies on gl_PointCoord which is unsupported in WGSL ??? INSTANCED on WebGPU.
-  if (forceGPU) {
-    const rt = cfg.renderer.rendererType;
-    if (!rt || rt === 'POINTS') cfg.renderer.rendererType = 'INSTANCED';
-  } else {
-    // Under WebGLBackend the POINTS path still works; leave it alone so the
-    // point sprite matches the CPU-only min.js 3-particles render.
-    if (!cfg.renderer.rendererType) cfg.renderer.rendererType = 'INSTANCED';
-  }
+  // WGSL has no gl_PointCoord; always promote POINTS ? INSTANCED.
+  { const rt = cfg.renderer.rendererType; if (!rt || rt === 'POINTS') cfg.renderer.rendererType = 'INSTANCED'; }
   if (cfg.renderer.blending) cfg.renderer.blending = resolveBlending(cfg.renderer.blending);
   const tex = loadTexture(textureId);
   if (tex) cfg.map = tex;
@@ -152,6 +145,10 @@ async function makeCtx(id, entry) {
   renderer.setSize(canvas.clientWidth || 300, canvas.clientHeight || 150, true);
   await renderer.init();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // WebGPU registration must happen after init() with the live renderer so
+  // the engine can inspect `renderer.backend.isWebGPUBackend` and refuse to
+  // create a system under a WebGL2 fallback. No silent CPU path exists in 4.x.
+  if (!enableWebGPU(renderer)) throw new Error('examples.html requires a native WebGPU compute backend');
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
@@ -223,6 +220,7 @@ async function openExpand(id) {
     exp.renderer.setSize(cnv.clientWidth || 736, cnv.clientHeight || 480, true);
     await exp.renderer.init();
     exp.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    if (!enableWebGPU(exp.renderer)) throw new Error('examples.html requires a native WebGPU compute backend');
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
     const pl = new THREE.Mesh(
@@ -311,7 +309,7 @@ function buildCard(entry) {
 
   const ctrl = document.createElement('div'); ctrl.className = 'card-controls';
   const tog = document.createElement('div'); tog.className = 'backend-toggle';
-  const cpuB = document.createElement('button'); cpuB.textContent = 'CPU';
+  const cpuB = document.createElement('button'); cpuB.textContent = 'CPU'; cpuB.disabled = true;
   const gpuB = document.createElement('button'); gpuB.textContent = 'GPU';
   // initial active chip = config.simulationBackend ('AUTO' resolves to the
 // actual backend capability). Matches the 5 upstream cards' chip.

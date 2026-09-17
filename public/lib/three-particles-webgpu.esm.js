@@ -1,4 +1,4 @@
-import { registerTSLMaterialFactory } from './three-particles.esm.js';
+import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
 import { Fn, min, float, max, floor as floor$1, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, atomicSub, instanceIndex, rand, sqrt, compute, numWorkgroups, atomicAdd, Loop, Continue, fract } from './three.tsl.js';
 import * as THREE from './three.module.js';
 import { DoubleSide, Vector3, DataTexture } from './three.module.js';

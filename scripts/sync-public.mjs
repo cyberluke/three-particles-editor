@@ -1,9 +1,8 @@
 /* eslint-disable no-console */
-// Sync the freshly built engine dist into the offline `public/lib` mirror used
-// by `examples.html`. Rewrites bare specifiers to the relative file paths that
-// exist under `public/lib/`, so the file:// + importmap path works without a
-// bundler. Always call after `engine:build`, or use the composed script
-// `build` which already wires them together.
+// Regenerate the offline `public/lib` mirror from `packages/three-particles/dist`
+// after each engine build. Bare specifiers used by the browser importmap are
+// preserved verbatim (see `keep` list) so that `examples.js` and the
+// WebGPU factory both resolve to the SAME browser module instance.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,16 +18,17 @@ const files = [
   ['three-particles.min.js', 'three-particles.min.js'],
 ];
 
-// Bare ? relative mapping used by the offline mirror.
-const map = {
+// Bare specifiers rewritten to `./?` file paths for file:// usage:
+const rewrite = {
   'easing-functions': './easing-functions.js',
   three: './three.module.js',
   'three/tsl': './three.tsl.js',
   'three/webgpu': './three.webgpu.js',
   'three-noise/build/three-noise.module.js': './three-noise.module.js',
   '@newkrok/three-utils': './three-utils/index.js',
-  '@cyberluke/three-particles': './three-particles.esm.js',
 };
+// Bare specifiers preserved (importmap owns them ? same module identity):
+const keep = new Set(['@cyberluke/three-particles']);
 
 let written = 0;
 for (const [src, dst] of files) {
@@ -38,15 +38,14 @@ for (const [src, dst] of files) {
     continue;
   }
   let code = readFileSync(from, 'utf8');
-  for (const bare of Object.keys(map)) {
-    const a = `from '${bare}'`;
-    const b = `from "${bare}"`;
-    code = code.split(a).join(`from '${map[bare]}'`);
-    code = code.split(b).join(`from "${map[bare]}"`);
+  for (const bare of Object.keys(rewrite)) {
+    if (keep.has(bare)) continue;
+    code = code.split(`from '${bare}'`).join(`from '${rewrite[bare]}'`);
+    code = code.split(`from "${bare}"`).join(`from "${rewrite[bare]}"`);
   }
   writeFileSync(resolve(lib, dst), code, 'utf8');
   written++;
-  console.log(`[mirror] ${src} ? public/lib/${dst} (${code.length} B)`);
+  console.log(`[mirror] ${src} -> public/lib/${dst} (${code.length} B)`);
 }
 if (written === 0) {
   console.error('[mirror] nothing copied; engine build failed?');
