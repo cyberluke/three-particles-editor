@@ -1,0 +1,12 @@
+import * as THREE from "three";
+import { createModifierStorageBuffers, createModifierComputeUpdate } from "./packages/three-particles/dist/webgpu.js";
+const max = 8;
+const curveMap = { data: new Float32Array(4), linearVelX: -1, linearVelY: -1, linearVelZ: -1, orbitalVelX: -1, orbitalVelY: -1, orbitalVelZ: -1, sizeOverLifetime: -1, opacityOverLifetime: -1, colorOverLifetimeR: -1, colorOverLifetimeG: -1, colorOverLifetimeB: -1 };
+const { buffers, freeListOffset } = createModifierStorageBuffers(max, true, curveMap.data, false, false);
+const pipe = createModifierComputeUpdate(buffers, max, curveMap, { forceFields:false, collisionPlanes:false, noise:false }, { shapeKind:1, radius:1, length:0, arc:360, spreadX:0, spreadY:0, spreadZ:0, speedMin:1, speedMax:1, sizeMin:1, sizeMax:1, rotMin:0, rotMax:0, opacityMin:1, opacityMax:1, lifeMin:1, lifeMax:1, colorRMin:1, colorRMax:1, colorGMin:1, colorGMax:1, colorBMin:1, colorBMax:1, startFrameMin:0, startFrameMax:0 }, 0, 0, freeListOffset);
+console.log("pipeline keys:", Object.keys(pipe).join(","));
+const renderer = new THREE.WebGLRenderer();
+await renderer.init();
+for (const n of pipe.computeNodes) n.build(renderer);
+console.log("BUILT OK");
+renderer.dispose();

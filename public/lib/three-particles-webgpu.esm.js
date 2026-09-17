@@ -558,6 +558,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const forceFieldOffset = curveLen;
   const collisionOffset = forceFieldOffset + (flags.forceFields ? FORCE_FIELD_DATA_SIZE : 0);
   const flStart = freeListStart;
+  const flStartNode = float(freeListStart);
   const ffNodes = flags.forceFields ? createForceFieldTSL(sCD, forceFieldOffset, forceFieldCount) : null;
   const cpNodes = flags.collisionPlanes ? createCollisionPlaneTSL(sCD, collisionOffset, collisionPlaneCount) : null;
   const lookupCurve = createCurveLookup(sCD);
@@ -565,7 +566,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
     const i = instanceIndex;
     const oldTop = atomicSub(sCD.element(flStart), float(1)).toVar();
     If(oldTop.greaterThan(float(0)), () => {
-      const slotIdx = sCD.element(flStart.add(oldTop)).toVar();
+      const slotIdx = sCD.element(flStartNode.add(oldTop)).toVar();
       const base2 = i.mul(float(8));
       const r0 = rand(uSeed.add(base2.add(float(0.13))));
       const r1 = rand(uSeed.add(base2.add(float(1.17))));
@@ -727,7 +728,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           sOIA.element(i).assign(vec4(inactive.x, inactive.y, inactive.z, float(0)));
           sCol.element(i).assign(vec4(float(0), float(0), float(0), float(0)));
           const top = atomicAdd(sCD.element(flStart), float(1)).toVar();
-          sCD.element(flStart.add(top).add(float(1))).assign(float(i));
+          sCD.element(flStartNode.add(top).add(float(1))).assign(float(i));
         });
       });
     });
