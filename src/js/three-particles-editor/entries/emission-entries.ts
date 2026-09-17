@@ -1,4 +1,4 @@
-import type { Burst, Constant, RandomBetweenTwoConstants } from '@newkrok/three-particles';
+import type { Burst, Constant, RandomBetweenTwoConstants } from '@cyberluke/three-particles';
 
 type EmissionEntriesParams = {
   parentFolder: any;

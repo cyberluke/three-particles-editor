@@ -14,9 +14,9 @@
       <h2>Three Particles Editor</h2>
       <p>
         A visual configuration tool for the <a
-          href="https://www.npmjs.com/package/@newkrok/three-particles"
+          href="https://www.npmjs.com/package/@cyberluke/three-particles"
           target="_blank"
-          rel="noopener noreferrer">@newkrok/three-particles</a
+          rel="noopener noreferrer">@cyberluke/three-particles</a
         > system.
       </p>
 

@@ -3,7 +3,7 @@ import type {
   LifetimeCurve,
   RandomBetweenTwoConstants,
   ParticleSystemConfig,
-} from '@newkrok/three-particles';
+} from '@cyberluke/three-particles';
 import type { GUI } from 'three/examples/jsm/libs/lil-gui.module.min';
 
 const resolveProperty = <T>(rootObject: T, property: string): unknown =>

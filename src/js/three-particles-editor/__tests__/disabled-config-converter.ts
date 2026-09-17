@@ -1,5 +1,5 @@
 import { convertToNewFormat } from '../config-converter';
-import { LifeTimeCurve } from '@newkrok/three-particles';
+import { LifeTimeCurve } from '@cyberluke/three-particles';
 
 describe('config-converter', () => {
   describe('convertToNewFormat', () => {

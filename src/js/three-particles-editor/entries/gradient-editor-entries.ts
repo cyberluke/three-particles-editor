@@ -4,7 +4,7 @@
  * Unified color and opacity over lifetime editor using a visual gradient interface
  */
 
-import type { ParticleSystemConfig } from '@newkrok/three-particles';
+import type { ParticleSystemConfig } from '@cyberluke/three-particles';
 import type { GUI } from 'three/examples/jsm/libs/lil-gui.module.min';
 import {
   createGradientEditor,

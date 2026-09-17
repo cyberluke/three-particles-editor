@@ -1,6 +1,6 @@
 import { openBezierEditorModal } from '../curve-editor/curve-editor';
 import { createLifetimeCurveFolderEntry } from './entry-helpers-v2';
-import type { ParticleSystemConfig } from '@newkrok/three-particles';
+import type { ParticleSystemConfig } from '@cyberluke/three-particles';
 import type { GUI } from 'three/examples/jsm/libs/lil-gui.module.min';
 
 type ColorOverLifetimeEntriesParams = {

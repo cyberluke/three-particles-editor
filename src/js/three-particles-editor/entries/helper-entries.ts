@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { TextureId } from '../texture-config';
 import { setTerrain } from '../world';
-import type { ParticleSystem, ParticleSystemConfig } from '@newkrok/three-particles';
+import type { ParticleSystem, ParticleSystemConfig } from '@cyberluke/three-particles';
 import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { updateShapeHelper } from '../shape-helper';
 import { updateForceFieldHelperVisibility } from './force-field-entries';

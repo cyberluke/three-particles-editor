@@ -1,0 +1,3 @@
+[submodule "packages/three-particles"]
+	path = packages/three-particles
+	url = https://github.com/cyberluke/three-particles.git

@@ -1,6 +1,6 @@
 import { createMinMaxFloatFolderEntry, createVector2FolderEntry } from './entry-helpers';
 
-import type { RandomBetweenTwoConstants } from '@newkrok/three-particles';
+import type { RandomBetweenTwoConstants } from '@cyberluke/three-particles';
 // TimeMode is a const enum, using string literals directly
 
 let timeModeControllers: any[] = [];

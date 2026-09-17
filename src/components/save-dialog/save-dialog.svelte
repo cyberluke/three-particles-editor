@@ -4,7 +4,7 @@
   import Dialog, { Title, Content, Actions } from '@smui/dialog';
   import Textfield from '@smui/textfield';
   import { getObjectDiff } from '../../js/three-particles-editor/save-and-load';
-  import { getDefaultParticleSystemConfig } from '@newkrok/three-particles';
+  import { getDefaultParticleSystemConfig } from '@cyberluke/three-particles';
   import { generateDefaultName } from '../../js/utils/name-utils';
   import { showSuccessSnackbar, showErrorSnackbar } from '../../js/stores/snackbar-store';
   import Prism from 'prismjs';

@@ -15,8 +15,8 @@ import {
   createParticleSystem,
   getDefaultParticleSystemConfig,
   updateParticleSystems,
-} from '@newkrok/three-particles';
-import { enableWebGPU } from '@newkrok/three-particles/webgpu';
+} from '@cyberluke/three-particles';
+import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
 import { convertToNewFormat } from './three-particles-editor/config-converter';
 import {
   createWorld,
@@ -24,6 +24,10 @@ import {
   updateWorld,
   captureScreenshot,
   getDepthTexture,
+  isWebGPUBackend,
+  isUsingNodeMaterials,
+  getRenderer,
+  getComputeDispatchCount,
 } from './three-particles-editor/world';
 import { getTexture, initAssets, loadCustomAssets } from './three-particles-editor/assets';
 
@@ -189,6 +193,7 @@ let isPaused = false;
 let configDirty = false;
 let isInitializing = false;
 let webGPUAvailable = false;
+let diagnosticFrames = 0;
 let backendBadge: HTMLElement | null = null;
 
 // Snapshot of structural feature state captured at particle system creation time.
@@ -221,7 +226,7 @@ const editorContextStack: EditorContextStackEntry[] = [];
 
 const resetToRoot = (): void => {
   if (editorContext.type === 'subEmitter') {
-    // Collapse all levels back — walk the stack from top to bottom
+    // Collapse all levels back ??? walk the stack from top to bottom
     while (editorContextStack.length > 0) {
       const entry = editorContextStack[editorContextStack.length - 1];
       if (expandedSubEmitterConfig) {
@@ -306,18 +311,11 @@ const pauseTime = (): void => {
 export const createParticleSystemEditor = async (targetQuery: string): Promise<void> => {
   clock = new THREE.Clock();
 
-  // Register WebGPU TSL materials only when the browser supports WebGPU
-  try {
-    if (navigator.gpu) {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) {
-        enableWebGPU();
-        webGPUAvailable = true;
-      }
-    }
-  } catch {
-    // WebGPU not available — engine will use GLSL ShaderMaterial fallback
-  }
+  // Create the live `WebGPURenderer` first, then register the TSL factory.
+  // `enableWebGPU(renderer)` returns `true` only when the renderer is the
+  // native WebGPU backend (compute-capable); the WebGL2 fallback and missing
+  // `navigator.gpu` both give `false`, so `webGPUAvailable` doubles as the
+  // compute-availability flag without a separate `requestAdapter()` probe.
 
   // Debug: log WGSL shader compilation errors with source code
   if (typeof GPUDevice !== 'undefined') {
@@ -332,7 +330,7 @@ export const createParticleSystemEditor = async (targetQuery: string): Promise<v
           console.group('%c[WGSL Shader Error]', 'color:red;font-weight:bold');
 
           errors.forEach((e: any) =>
-            console.error(`Line ${e.lineNum}:${e.linePos} — ${e.message}`)
+            console.error(`Line ${e.lineNum}:${e.linePos} ??? ${e.message}`)
           );
           // eslint-disable-next-line no-console
           console.log(descriptor.code);
@@ -345,6 +343,11 @@ export const createParticleSystemEditor = async (targetQuery: string): Promise<v
   }
 
   scene = await createWorld(targetQuery);
+
+  const renderer = getRenderer();
+
+  // The returned boolean IS the compute-availability flag.
+  webGPUAvailable = enableWebGPU(renderer);
 
   particleSystemContainer = new Object3D();
   scene.add(particleSystemContainer);
@@ -410,6 +413,12 @@ const animate = (): void => {
   const softParticlesEnabled = !!activeConfig?.renderer?.softParticles?.enabled;
   const computeNode = particleSystem?.computeNode ?? null;
   updateWorld(softParticlesEnabled, particleSystemContainer, computeNode);
+  if (++diagnosticFrames === 120) {
+    console.log(
+      '[WebGPU proof] compute dispatches:',
+      getComputeDispatchCount()
+    );
+  }
   requestAnimationFrame(animate);
 };
 
@@ -450,8 +459,8 @@ const resolveMeshGeometry = (config: any): void => {
 };
 
 /**
- * Recreates the particle system from scratch, or — when live update is enabled and
- * liveUpdateKeys are provided — applies a partial config update via the engine's
+ * Recreates the particle system from scratch, or ??? when live update is enabled and
+ * liveUpdateKeys are provided ??? applies a partial config update via the engine's
  * updateConfig API without disposing the system.
  *
  * @param markAsDirty  When false the config-dirty flag is not set (used during init/load).
@@ -463,10 +472,10 @@ const resolveMeshGeometry = (config: any): void => {
 const recreateParticleSystem = (markAsDirty = true, liveUpdateKeys?: string[]): void => {
   const activeConfig = getActiveConfig();
 
-  // Live-update path — applies a partial config update via the engine's updateConfig API.
+  // Live-update path ??? applies a partial config update via the engine's updateConfig API.
   // Falls through to full recreate when:
   //  1. A structural feature toggle changed (e.g. colorOverLifetime became active when it
-  //     was inactive at creation, or force field count went from 0 → >0). The GPU shader
+  //     was inactive at creation, or force field count went from 0 ??? >0). The GPU shader
   //     is compiled once and cannot add/remove feature branches at runtime.
   //  2. The update touches curve-based keys whose data is baked into a GPU texture at
   //     creation time (colorOverLifetime, opacityOverLifetime, sizeOverLifetime,
@@ -513,7 +522,7 @@ const recreateParticleSystem = (markAsDirty = true, liveUpdateKeys?: string[]): 
       }
       return;
     }
-    // Structural change or baked-curve update detected — fall through to full recreate
+    // Structural change or baked-curve update detected ??? fall through to full recreate
   }
 
   // Throttle full recreate for continuous interactions (slider / color picker drag).
@@ -588,14 +597,42 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
       restoreSubEmitterRefs(activeConfig.subEmitters, convertedConfig.subEmitters);
   }
 
-  // WebGPU: POINTS rendererType uses gl_PointCoord which is not available in WGSL.
-  // Force INSTANCED when WebGPU is active (same approach as the three-particles demos).
-  // Applied to the converted copy so the editor config stays unchanged for serialization.
-  if (webGPUAvailable) {
+  // Two independent capabilities derived from the ACTUAL 3D renderer.
+  //   useTSLMaterial ??? TSL `NodeMaterial` whenever the running renderer is a
+  //                    `WebGLRenderer`-compatible `WebGPURenderer` (covers
+  //                    both `WebGPUBackend` AND the `WebGLBackend` fallback ???
+  //                    both compile `NodeMaterial`s). Legacy `ShaderMaterial`
+  //                    is *not* registered in that renderer's node library,
+  //                    which is what produces the "black square" symptom.
+  //   useGPUCompute  ??? compute pipeline (WebGPU-only buffers) is created only
+  //                    on the real `WebGPUBackend`; under `WebGLBackend` we
+  //                    fall back to CPU simulation per `requestedBackend`.
+  const useTSLMaterial = isUsingNodeMaterials();
+  const isNativeWebGPU = isWebGPUBackend();
+  const requestedBackend =
+    (activeConfig.simulationBackend as 'AUTO' | 'CPU' | 'GPU' | undefined) ?? 'AUTO';
+  const useGPUCompute =
+    isNativeWebGPU && (requestedBackend === 'GPU' || requestedBackend === 'AUTO');
+
+  // Apply to the converted copy so the editor-side config stays unchanged for
+  // serialization and for lil-gui references.
+  convertedConfig.simulationBackend = (useGPUCompute
+    ? 'GPU'
+    : 'CPU') as typeof convertedConfig.simulationBackend;
+  if (!convertedConfig.renderer)
+    convertedConfig.renderer = {} as NonNullable<typeof convertedConfig.renderer>;
+  // `materialBackend` is not part of the published `Renderer` type but is
+  // read at runtime by the library; use a widened cast.
+  (convertedConfig.renderer as { materialBackend?: 'TSL' | 'GLSL' }).materialBackend =
+    useTSLMaterial ? 'TSL' : 'GLSL';
+
+  // POINTS rendererType relies on `gl_PointCoord`, which is not available in WGSL.
+  // Force INSTANCED whenever the TSL (WebGPU-backend) material path is in use.
+  if (useTSLMaterial) {
     const rt = convertedConfig.renderer?.rendererType;
     if (!rt || rt === 'POINTS') {
-      if (!convertedConfig.renderer) convertedConfig.renderer = {};
-      convertedConfig.renderer.rendererType = 'INSTANCED';
+      convertedConfig.renderer.rendererType =
+        'INSTANCED' as typeof convertedConfig.renderer.rendererType;
     }
   }
 
@@ -620,6 +657,18 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     backendBadge.style.background = isGPU ? '#2e7d32' : '#555';
   }
 
+  // Diagnostic: prove the compute wiring end-to-end.
+  console.table({
+    navigatorGPU: typeof navigator !== 'undefined' && !!navigator.gpu,
+    renderer: getRenderer().constructor.name,
+    enableWebGPU: webGPUAvailable,
+    requestedBackend: convertedConfig.simulationBackend,
+    computeNode: !!particleSystem.computeNode,
+  });
+  diagnosticFrames = 0;
+  setTimeout(() => {
+    console.log('WebGPU compute dispatches after 2s:', getComputeDispatchCount());
+  }, 2000);
   particleSystemContainer.add(particleSystem.instance);
   configEntries.forEach(
     ({ onParticleSystemChange }) => onParticleSystemChange && onParticleSystemChange(particleSystem)
@@ -677,7 +726,7 @@ const deepMerge = (target: any, source: any): any => {
 };
 
 const expandSubEmitterConfig = (minimalConfig: any): any => {
-  // Start with a full default config (JSON clone — no THREE objects)
+  // Start with a full default config (JSON clone ??? no THREE objects)
   const fullConfig = JSON.parse(JSON.stringify(getDefaultParticleSystemConfig()));
   // Deep merge the minimal (diff) config on top
   Object.keys(minimalConfig).forEach((key) => {
@@ -770,7 +819,7 @@ const switchToParent = (): void => {
       parentConfig: null,
     };
   } else {
-    // Back to a parent sub-emitter level — restore the saved expanded config
+    // Back to a parent sub-emitter level ??? restore the saved expanded config
     const parentEntry = editorContextStack[editorContextStack.length - 1];
     expandedSubEmitterConfig = poppedEntry.expandedConfig;
     editorContext = {
@@ -871,7 +920,7 @@ const createPanel = (config: any = particleSystemConfig): void => {
   // Live-updatable entries pass liveUpdateKeys so that when useLiveUpdate is enabled,
   // only those top-level config keys are sent to engine.updateConfig().
   // Non-updatable entries (shape, renderer, texture sheet, trail, mesh, sub-emitter)
-  // call recreateParticleSystem() without liveUpdateKeys → always full recreate.
+  // call recreateParticleSystem() without liveUpdateKeys ??? always full recreate.
 
   const generalKeys = [
     'duration',

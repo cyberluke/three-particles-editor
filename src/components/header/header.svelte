@@ -379,6 +379,7 @@
         <Icon class="material-icons">{lightTheme ? 'dark_mode' : 'light_mode'}</Icon>
         <Label>{lightTheme ? 'Dark mode' : 'Light mode'}</Label>
       </Button>
+      <a class="ext-link" href="./examples.html" target="_blank" rel="noopener">Examples →</a>
     </div>
   {:else}
     <!-- Mobile layout -->
@@ -614,6 +615,17 @@
     @media (max-width: 768px) {
       display: none;
     }
+  }
+
+  .ext-link {
+    margin-left: 10px;
+    color: var(--mdc-theme-primary, #ff3e00);
+    text-decoration: none;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .ext-link:hover {
+    text-decoration: underline;
   }
 
   .mobile-controls {

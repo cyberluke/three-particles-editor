@@ -1,6 +1,6 @@
 import { openBezierEditorModal } from '../curve-editor/curve-editor';
 import { createLifetimeCurveFolderEntry } from './entry-helpers-v2';
-import type { ParticleSystemConfig } from '@newkrok/three-particles';
+import type { ParticleSystemConfig } from '@cyberluke/three-particles';
 // LifeTimeCurve is a const enum, using string literals directly
 // Use direct import instead of @types
 import type { GUI } from 'three/examples/jsm/libs/lil-gui.module.min';

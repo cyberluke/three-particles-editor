@@ -184,7 +184,7 @@
 - add optional chaining to library.svelte and add transparent texture ([35cc8ff](https://github.com/NewKrok/three-particles-editor/commit/35cc8ffa8fe042a06e48f3a3e669922a17e65ce4))
 - changes based on the latest dependency updates ([12fa354](https://github.com/NewKrok/three-particles-editor/commit/12fa35460661e35a09fd46a6574ebcad0202a85d))
 - correct LifeTimeCurve and LifetimeCurve type references ([bde71c0](https://github.com/NewKrok/three-particles-editor/commit/bde71c035caadebc02c079d5c4afca6f4743cfbf))
-- ensure proper object initialization for @newkrok/three-particles v2.0.2 compatibility ([e7a88bc](https://github.com/NewKrok/three-particles-editor/commit/e7a88bc9df5f7d3f2e74c45bae240cb637c9e840))
+- ensure proper object initialization for @cyberluke/three-particles v2.0.2 compatibility ([e7a88bc](https://github.com/NewKrok/three-particles-editor/commit/e7a88bc9df5f7d3f2e74c45bae240cb637c9e840))
 - export type checking functions to resolve ESLint errors ([2a1e1ae](https://github.com/NewKrok/three-particles-editor/commit/2a1e1ae5da39feeb5bb288f3c4d21f2611633834))
 - implement tab visibility change handling to pause animation ([86591da](https://github.com/NewKrok/three-particles-editor/commit/86591da20d35c918e06884cd30bdfdf2c10effa3))
 - **imports:** update import paths to reference TypeScript files ([406db56](https://github.com/NewKrok/three-particles-editor/commit/406db560c44d20ef7636f29354eba38323c6bb64))
@@ -199,7 +199,7 @@
 - replace legacy Sass API with modern API to resolve deprecation warnings ([236065d](https://github.com/NewKrok/three-particles-editor/commit/236065df55ecadaa51eccb58c75e4d2ff7e31cbe))
 - startSpeed conversion for objects with only max property ([d9fe428](https://github.com/NewKrok/three-particles-editor/commit/d9fe428052b0afc2f0cc12912b6cdf269b9b2283))
 - textureSheetAnimation.startFrame conversion for objects with only max property ([829a4e6](https://github.com/NewKrok/three-particles-editor/commit/829a4e6527e546c7fa21dfa5641b11347fa8e22f))
-- update @newkrok/three-particles import paths and fix bundling issues ([38d5b08](https://github.com/NewKrok/three-particles-editor/commit/38d5b08bc2e564765c120fd73b824291e7fcb906))
+- update @cyberluke/three-particles import paths and fix bundling issues ([38d5b08](https://github.com/NewKrok/three-particles-editor/commit/38d5b08bc2e564765c120fd73b824291e7fcb906))
 - update lifetime curve handling in size and opacity editors ([6cc2036](https://github.com/NewKrok/three-particles-editor/commit/6cc2036347c6aa4a8605dbd1f41663f387f4bf6a))
 
 ### Features
@@ -255,14 +255,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed compatibility issues with @newkrok/three-particles v2.0.3
+- Fixed compatibility issues with @cyberluke/three-particles v2.0.3
 - Addressed warnings about multiple instances of Three.js being imported
 
 ## [2.0.0] - 2025-04-20
 
 ### Added
 
-- Initial support for @newkrok/three-particles v2.0.x
+- Initial support for @cyberluke/three-particles v2.0.x
 - TypeScript conversion for improved type safety
 - Conversion functionality for legacy configurations
 

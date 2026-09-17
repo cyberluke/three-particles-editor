@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>@cyberluke/three-particles ??? Examples</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh}
+    header{text-align:center;padding:40px 20px 20px;border-bottom:1px solid #222}
+    header h1{font-size:2rem;color:#fff;margin-bottom:8px}
+    header p{color:#888;font-size:1.1rem;margin-bottom:6px}
+    header .links{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:10px}
+    header .links a{color:#4fc3f7;text-decoration:none;font-size:.9rem;padding:4px 12px;border:1px solid #333;border-radius:4px}
+    header .links a:hover{background:#1a1a2e;border-color:#4fc3f7}
+    .vsw{display:inline-flex;align-items:center;gap:8px}
+    .vsw label{color:#888;font-size:.85rem}
+    .vsw .static{background:#1a1a2e;color:#4fc3f7;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:.85rem}
+
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:24px;padding:32px;max-width:1200px;margin:0 auto}
+    .card{background:#141414;border:1px solid #222;border-radius:8px;overflow:hidden;transition:border-color .2s,transform .2s;display:flex;flex-direction:column}
+    .card.active,.card:hover{border-color:#4fc3f7;transform:translateY(-2px)}
+    .card-canvas-wrapper{position:relative;height:220px;width:100%;background-color:#1a1a1a;
+      background-image:linear-gradient(45deg,#222 25%,transparent 25%,transparent 75%,#222 75%),linear-gradient(45deg,#222 25%,transparent 25%,transparent 75%,#222 75%);
+      background-size:16px 16px;background-position:0 0,8px 8px}
+    .card-canvas-wrapper canvas{width:100%;height:100%;display:block;position:absolute;inset:0}
+    .preview-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:1;transition:opacity .15s}
+    .card.active .preview-img{opacity:0}
+    .play-overlay{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:44px;height:44px;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;pointer-events:none;transition:opacity .2s}
+    .card.active .play-overlay{opacity:0}
+    .card-stats{position:absolute;bottom:8px;left:8px;display:none;align-items:center;gap:8px;padding:4px 8px;background:rgba(0,0,0,.7);border-radius:4px;font-family:'SF Mono','Fira Code',monospace;font-size:.7rem;color:#4fc3f7}
+    .card.active .card-stats{display:flex}
+    .card-info{padding:16px;flex:1;display:flex;flex-direction:column}
+    .card-info h3{font-size:1.1rem;color:#fff;margin-bottom:4px}
+    .card-info p{font-size:.85rem;color:#888;line-height:1.4;flex:1}
+    .card-info .tag{display:inline-block;padding:2px 8px;background:#1a1a2e;color:#4fc3f7;border-radius:3px;font-size:.75rem}
+    .card-info .card-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+    .card-info .card-controls{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:10px;flex-wrap:wrap}
+    .card-btns{display:flex;align-items:center;gap:6px;margin-left:auto}
+    .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid #333;border-radius:4px;background:transparent;color:#4fc3f7;cursor:pointer;transition:background .2s,border-color .2s,color .2s}
+    .icon-btn:hover{background:#1a1a2e;border-color:#4fc3f7}
+    .icon-btn svg{width:16px;height:16px}
+    .icon-btn.copied{color:#66bb6a;border-color:#66bb6a}
+    .icon-btn.playing{color:#66bb6a;border-color:#66bb6a}
+    .backend-toggle{display:inline-flex;border:1px solid #333;border-radius:4px;overflow:hidden;font-size:.7rem;flex-shrink:0}
+    .backend-toggle button{background:transparent;border:none;color:#888;padding:4px 8px;cursor:pointer;transition:background .2s,color .2s;font-size:inherit;font-family:inherit}
+    .backend-toggle button.active{background:#1a1a2e;color:#66bb6a}
+    .backend-toggle button:disabled{opacity:.35;cursor:default}
+
+    .bench-overlay,.expand-overlay{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.85);align-items:center;justify-content:center}
+    .bench-overlay.open,.expand-overlay.open{display:flex}
+    .bench-modal,.expand-modal{background:#141414;border:1px solid #333;border-radius:12px;width:90vw;max-width:800px;max-height:90vh;overflow-y:auto;padding:28px 32px;position:relative}
+    .bench-modal h2,.expand-header h2{color:#fff;font-size:1.3rem}
+    .bench-modal p{color:#888;font-size:.85rem;margin-bottom:14px}
+    .bench-close,.expand-close{position:absolute;top:12px;right:16px;background:none;border:none;color:#888;font-size:1.5rem;cursor:pointer}
+    .bench-actions{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+    .bench-btn{padding:8px 20px;border-radius:6px;border:1px solid #4fc3f7;background:transparent;color:#4fc3f7;font-size:.9rem;cursor:pointer}
+    .bench-btn:disabled{opacity:.4;cursor:not-allowed}
+    .bench-status{color:#888;font-size:.85rem}
+    .bench-chart-wrap{max-width:736px;margin:0 auto;border:1px solid #222;border-radius:8px;background:#111;overflow:hidden}
+    .bench-versions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+    .bench-versions label{display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid #333;border-radius:4px;font-size:.85rem;color:#ccc;cursor:pointer}
+
+    .expand-modal{max-width:1000px;padding:20px 24px}
+    .expand-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .expand-controls{display:flex;align-items:center;gap:10px}
+    .expand-canvas-wrapper{position:relative;width:100%;height:70vh;background-color:#1a1a1a;
+      background-image:linear-gradient(45deg,#222 25%,transparent 25%,transparent 75%,#222 75%),linear-gradient(45deg,#222 25%,transparent 25%,transparent 75%,#222 75%);
+      background-size:16px 16px;background-position:0 0,8px 8px;border-radius:8px;overflow:hidden}
+    .expand-canvas-wrapper canvas{width:100%;height:100%;display:block}
+    .expand-stats{position:absolute;top:12px;left:12px;display:flex;gap:12px;padding:6px 12px;background:rgba(0,0,0,.7);border-radius:6px;font-family:'SF Mono','Fira Code',monospace;font-size:.8rem;color:#4fc3f7}
+
+    .error-overlay{display:none;position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow-y:auto;z-index:10000;background:#1a0000;border-top:2px solid #ef5350;font-family:monospace;font-size:.82rem;color:#ffcdd2}
+    .error-overlay.visible{display:block}
+    .error-header{position:sticky;top:0;background:#2c0b0b;display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #4e1a1a}
+    .error-header span{font-weight:bold;color:#ef5350}
+    .error-header-btns button{background:none;border:1px solid #ef5350;color:#ef5350;padding:3px 10px;border-radius:4px;font-size:.78rem;cursor:pointer}
+    .error-list{padding:10px 14px}
+    .error-entry{padding:6px 0;border-bottom:1px solid #3a1111;white-space:pre-wrap;word-break:break-all}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>@cyberluke/three-particles</h1>
+    <p>Interactive examples for the Three.js particle system library</p>
+    <div class="links">
+      <a href="https://github.com/NewKrok/three-particles" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://www.npmjs.com/package/@cyberluke/three-particles" target="_blank" rel="noopener">npm</a>
+      <a href="https://newkrok.github.io/three-particles/api/" target="_blank" rel="noopener">API Docs</a>
+      <a href="./index.html">Visual Editor</a>
+      <a href="#" id="bench-open-btn">Benchmark</a>
+    </div>
+    <div class="vsw"><label>Version:</label><span id="version-static" class="static">--</span></div>
+  </header>
+
+  <!-- Benchmark modal -->
+  <div class="bench-overlay" id="bench-overlay">
+    <div class="bench-modal">
+      <button class="bench-close" id="bench-close">&times;</button>
+      <h2>Performance Benchmark</h2>
+      <p>Compare CPU vs GPU compute on the first entry (bubble-surface-pop, 350-particle, sub-emitter + kill + noise). 2 warm-up + 30?? measured, per-frame median via <code>await renderer.render()</code>.</p>
+      <div class="bench-versions" id="bench-versions"></div>
+      <div class="bench-actions">
+        <button class="bench-btn" id="bench-run">Run benchmark</button>
+        <button class="bench-btn" id="bench-abort" disabled>Abort</button>
+        <span class="bench-status" id="bench-status"></span>
+      </div>
+      <div class="bench-chart-wrap"><canvas id="bench-chart" width="736" height="298"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Expand modal -->
+  <div class="expand-overlay" id="expand-overlay">
+    <div class="expand-modal">
+      <button class="expand-close" id="expand-close">&times;</button>
+      <div class="expand-header">
+        <h2 id="expand-title"></h2>
+        <div class="expand-controls">
+          <div class="backend-toggle">
+            <button id="expand-cpu-btn" class="active">CPU</button>
+            <button id="expand-gpu-btn">GPU</button>
+          </div>
+          <button class="icon-btn" id="expand-playpause-btn" title="Pause / Play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
+          <button class="icon-btn" id="expand-restart-btn" title="Restart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
+          <button class="icon-btn" id="expand-copy-btn" title="Copy config JSON"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+      </div>
+      <div class="expand-canvas-wrapper" style="position:relative">
+        <canvas id="expand-canvas"></canvas>
+        <div class="expand-stats" id="expand-stats">
+          <span id="expand-renderer-label">???</span>
+          <span id="expand-backend-label">???</span>
+          <span id="expand-fps">-- FPS</span>
+          <span id="expand-frametime">-- ms/tick</span>
+          <span id="expand-elapsed">0.0s</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid" id="examples-grid"></div>
+
+  <!-- Error overlay -->
+  <div class="error-overlay" id="error-overlay">
+    <div class="error-header">
+      <span id="error-count">0 error(s)</span>
+      <div class="error-header-btns"><button id="error-copy-btn">Copy</button><button id="error-close-btn">Close</button></div>
+    </div>
+    <div class="error-list" id="error-list"></div>
+  </div>
+  <script>
+  (function(){
+    var overlay=document.getElementById('error-overlay'),list=document.getElementById('error-list'),countEl=document.getElementById('error-count'),errors=[];
+    function addError(m){errors.push(m);var e=document.createElement('div');e.className='error-entry';e.textContent=m;list.appendChild(e);countEl.textContent=errors.length+' error(s)';overlay.classList.add('visible');}
+    window.addEventListener('error',function(ev){var m=ev.message||'Unknown';if(ev.filename)m+='\n  at '+ev.filename+':'+ev.lineno+':'+ev.colno;if(ev.error&&ev.error.stack)m+='\n'+ev.error.stack;addError(m);});
+    window.addEventListener('unhandledrejection',function(ev){var r=ev.reason,m='Unhandled Promise Rejection: '+(r&&r.message?r.message:String(r));if(r&&r.stack)m+='\n'+r.stack;addError(m);});
+    document.getElementById('error-copy-btn').addEventListener('click',function(ev){ev.target.textContent='Copied!';setTimeout(()=>{ev.target.textContent='Copy'},1500);navigator.clipboard.writeText(errors.join('\n\n---\n\n'));});
+    document.getElementById('error-close-btn').addEventListener('click',function(){overlay.classList.remove('visible');});
+  })();
+  </script>
+
+  <!-- Offline importmap. `?v=4` busts prior browser cache of these files.
+       Trailing "three/": "./lib/three/" resolves the 3.js addons and libs. -->
+  <!-- 3.js 0.186 ships no `.min.js` anymore; the raw ESM builds are used directly. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three.module.js?v=4",
+      "three/webgpu": "./lib/three.webgpu.js?v=4",
+      "three/tsl": "./lib/three.tsl.js?v=4",
+      "three/": "./lib/three/",
+      "THREE": "./lib/three.webgpu.js?v=4",
+      "@cyberluke/three-particles": "./lib/three-particles.esm.js?v=4",
+      "@cyberluke/three-particles/webgpu": "./lib/three-particles-webgpu.esm.js?v=4",
+      "@newkrok/three-utils": "./lib/three-utils/index.js?v=4",
+      "@newkrok/three-utils/assets": "./lib/three-utils/assets/index.js?v=4",
+      "@newkrok/three-utils/audio": "./lib/three-utils/audio/index.js?v=4",
+      "easing-functions": "./lib/easing-functions.js?v=4",
+      "three-noise/build/three-noise.module.js": "./lib/three-noise.module.js?v=4"
+    }
+  }
+  </script>
+  <script type="module" src="./examples.js?v=4"></script>
+</body>
+</html>

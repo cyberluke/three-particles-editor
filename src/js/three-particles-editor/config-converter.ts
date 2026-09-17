@@ -1,11 +1,11 @@
-import { getCurveFunction } from '@newkrok/three-particles';
+import { getCurveFunction } from '@cyberluke/three-particles';
 import type {
   CurveFunctionId,
   TimeMode,
   Constant,
   ParticleSystemConfig,
   RandomBetweenTwoConstants,
-} from '@newkrok/three-particles';
+} from '@cyberluke/three-particles';
 import * as THREE from 'three';
 
 /**
@@ -74,7 +74,7 @@ const updateStartLifetime = (
 
 /**
  * Converts an old particle system configuration to the new format
- * compatible with @newkrok/three-particles 3.x
+ * compatible with @cyberluke/three-particles 3.x
  */
 /**
  * Legacy configuration type (pre-2.0.0)

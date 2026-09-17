@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -13,6 +13,7 @@ let controls: OrbitControls;
 let stats: Stats;
 let mesh: THREE.Mesh;
 let depthRenderTarget: THREE.RenderTarget | null = null;
+let computeDispatchCount = 0;
 
 export const createWorld = async (targetQuery: string): Promise<THREE.Scene> => {
   const container = document.querySelector(targetQuery);
@@ -81,6 +82,7 @@ export const updateWorld = (
   // Dispatch GPU compute for WebGPU particle simulation
   if (computeNode) {
     (renderer as any).compute(computeNode);
+    computeDispatchCount++;
   }
 
   if (softParticlesEnabled && depthRenderTarget) {
@@ -95,6 +97,8 @@ export const updateWorld = (
   renderer.render(scene, camera);
   stats.update();
 };
+
+export const getComputeDispatchCount = (): number => computeDispatchCount;
 
 export const setTerrain = (textureId?: string): void => {
   if (!textureId || textureId === TextureId.WIREFRAME) {
@@ -118,10 +122,27 @@ export const setTerrain = (textureId?: string): void => {
 };
 
 export const getCamera = (): THREE.PerspectiveCamera => camera;
+export const getRenderer = (): WebGPURenderer => renderer;
 export const getRendererDomElement = (): HTMLCanvasElement => renderer.domElement;
 export const getOrbitControls = (): OrbitControls => controls;
 export const getDepthTexture = (): THREE.DepthTexture | null =>
   depthRenderTarget?.depthTexture ?? null;
+
+// Two independent capabilities reported by the *actual* live renderer.
+// They are intentionally NOT one-and-the-same; each drives a different config field:
+//  - `isUsingNodeMaterials()` â€” drives the **material** path (TSL `NodeMaterial`
+//    vs legacy `ShaderMaterial`). True for both the WebGPU backend AND its
+//    WebGL2 fallback, because both process TSL `NodeMaterial`s (via WGSL /
+//    GLSL node builders).
+//  - `isWebGPUBackend()` â€” drives the **compute** path. `true` only for
+//    `WebGPUBackend` (native WebGPU) â€” `WebGLBackend` (fallback) does not set
+//    `isWebGPUBackend` on itself.
+export const isUsingNodeMaterials = (): boolean =>
+  (renderer as unknown as { isWebGPURenderer?: boolean } | undefined)?.isWebGPURenderer === true;
+
+export const isWebGPUBackend = (): boolean =>
+  (renderer as unknown as { backend?: { isWebGPUBackend?: boolean } } | undefined)?.backend
+    ?.isWebGPUBackend === true;
 
 export const captureScreenshot = (): void => {
   // Render the current frame

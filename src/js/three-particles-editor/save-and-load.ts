@@ -1,4 +1,4 @@
-import { getDefaultParticleSystemConfig } from '@newkrok/three-particles';
+import { getDefaultParticleSystemConfig } from '@cyberluke/three-particles';
 import { isConfigV2 } from './config-util';
 import { convertToNewFormat } from './config-converter';
 import { showLegacyConfigModal } from './showLegacyConfigModal';

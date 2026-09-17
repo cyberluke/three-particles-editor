@@ -1,6 +1,6 @@
 # THREE Particles Editor
 
-Particle system editor for ThreeJS in the style of Unity. This editor allows you to create, customize, and export particle effects for use with the [@newkrok/three-particles](https://github.com/NewKrok/three-particles) library.
+Particle system editor for ThreeJS in the style of Unity. This editor allows you to create, customize, and export particle effects for use with the [@cyberluke/three-particles](https://github.com/NewKrok/three-particles) library.
 
 ## Live Demo
 
@@ -34,7 +34,7 @@ npm run dev
 
 - Visual editor for creating and fine-tuning particle effects
 - Real-time preview of particle systems
-- Export configurations for use with the @newkrok/three-particles library
+- Export configurations for use with the @cyberluke/three-particles library
 - Customizable particle properties (position, velocity, size, color, alpha, rotation, etc.)
 - Support for various emitter shapes and parameters
 

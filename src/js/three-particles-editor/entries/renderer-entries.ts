@@ -1,4 +1,4 @@
-import { blendingMap } from '@newkrok/three-particles';
+import { blendingMap } from '@cyberluke/three-particles';
 import { getTexture } from '../assets';
 import { getDepthTexture } from '../world';
 import { openTextureSelectorModal } from '../texture-selector/texture-selector';
@@ -65,7 +65,7 @@ export const createRendererEntries = ({
 
     if (isMesh) {
       // Mesh particles use the engine's built-in 1x1 white texture,
-      // sprite textures are not applicable — texture UI is hidden
+      // sprite textures are not applicable ??? texture UI is hidden
     } else {
       // Add a display field showing current texture
       const displayTextureConfig = {
