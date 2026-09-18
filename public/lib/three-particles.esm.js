@@ -1180,6 +1180,7 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   u.deltaMs.value = delta * 1e3;
   u.gravityVelocity.value.copy(gv);
   u.emitCount.value = emitCount;
+  pipeline.emitNode.count = emitCount;
   u.seed.value = now * 1e-3;
   const n = generalData.noise;
   if (u.noiseStrength) u.noiseStrength.value = n.strength;
@@ -1191,8 +1192,8 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   const ffInfo = pipeline.forceFieldInfo;
   const cInfo = pipeline.collisionPlaneInfo ?? null;
   if ((ffInfo || cInfo) && _tslMaterialFactory) {
-    const cd = pipeline.buffers.curveData;
-    const cdArr = cd.array;
+    const cdArr = pipeline.buffers.packedData;
+    const cdNode = pipeline.packedDataNode;
     if (ffInfo && normalizedForceFields.length > 0) {
       const encFF = _tslMaterialFactory.encodeForceFieldsForGPU(normalizedForceFields, generalData.particleSystemId, generalData.normalizedLifetimePercentage);
       let changedFF = false;
@@ -1202,8 +1203,8 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
       }
       if (changedFF) {
         cdArr.set(encFF, ffInfo.offset);
-        cd.addUpdateRange(ffInfo.offset, encFF.length);
-        cd.needsUpdate = true;
+        cdNode.addUpdateRange(ffInfo.offset, encFF.length);
+        cdNode.needsUpdate = true;
       }
       ffInfo.countUniform.value = normalizedForceFields.length;
     }
@@ -1216,8 +1217,8 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
       }
       if (changedCP) {
         cdArr.set(encCP, cInfo.offset);
-        cd.addUpdateRange(cInfo.offset, encCP.length);
-        cd.needsUpdate = true;
+        cdNode.addUpdateRange(cInfo.offset, encCP.length);
+        cdNode.needsUpdate = true;
       }
       cInfo.countUniform.value = normalizedCollisionPlanes.length;
     }

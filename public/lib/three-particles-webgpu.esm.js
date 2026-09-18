@@ -1,5 +1,5 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, min, float, max, floor, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, atomicSub, instanceIndex, rand, sqrt, compute, atomicAdd, Loop, Continue, fract } from './three.tsl.js';
+import { Fn, min, float, max, floor, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, buffer, atomicSub, uint, atomicLoad, instanceIndex, rand, sqrt, compute, atomicAdd, atomicStore, Loop, Continue, fract } from './three.tsl.js';
 import * as THREE from './three.module.js';
 import { DoubleSide, Vector3, DataTexture } from './three.module.js';
 import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js';
@@ -290,22 +290,22 @@ function createForceFieldTSL(sCurveData, forceFieldOffset, forceFieldCount) {
 
 // src/js/effects/three-particles/webgpu/curve-bake.ts
 var CURVE_RESOLUTION = 256;
-function bakeCurveIntoBuffer(buffer, writeOffset, particleSystemId, curve) {
+function bakeCurveIntoBuffer(buffer2, writeOffset, particleSystemId, curve) {
   const curveFn = getCurveFunctionFromConfig(particleSystemId, curve);
   const lastIndex = CURVE_RESOLUTION - 1;
   for (let i = 0; i < CURVE_RESOLUTION; i++) {
     const t = i / lastIndex;
-    buffer[writeOffset + i] = curveFn(t);
+    buffer2[writeOffset + i] = curveFn(t);
   }
   return writeOffset + CURVE_RESOLUTION;
 }
-function bakeVelocityAxisIntoBuffer(buffer, writeOffset, particleSystemId, value) {
+function bakeVelocityAxisIntoBuffer(buffer2, writeOffset, particleSystemId, value) {
   if (isLifeTimeCurve(value)) {
-    return bakeCurveIntoBuffer(buffer, writeOffset, particleSystemId, value);
+    return bakeCurveIntoBuffer(buffer2, writeOffset, particleSystemId, value);
   }
   const constantValue = calculateValue(particleSystemId, value, 0.5);
   for (let i = 0; i < CURVE_RESOLUTION; i++) {
-    buffer[writeOffset + i] = constantValue;
+    buffer2[writeOffset + i] = constantValue;
   }
   return writeOffset + CURVE_RESOLUTION;
 }
@@ -471,12 +471,12 @@ function createModifierStorageBuffers(maxParticles, instanced, curveData, hasFor
   const curveLen = Math.max(curveData.length, 1);
   const ffSize = hasForceFields ? FORCE_FIELD_DATA_SIZE : 0;
   const cpSize = hasCollisionPlanes ? COLLISION_PLANE_DATA_SIZE : 0;
-  const freeListStart = curveLen + ffSize + cpSize;
-  const totalLen = freeListStart + maxParticles + 1;
-  const arr = new Float32Array(totalLen);
-  arr.set(curveData, 0);
-  arr[freeListStart] = maxParticles;
-  for (let i = 0; i < maxParticles; i++) arr[freeListStart + 1 + i] = i;
+  const packedData = new Float32Array(curveLen + ffSize + cpSize);
+  packedData.set(curveData, 0);
+  const allocatorCount = maxParticles + 1;
+  const allocatorData = new Uint32Array(allocatorCount);
+  allocatorData[0] = maxParticles;
+  for (let i = 0; i < maxParticles; i++) allocatorData[i + 1] = i;
   return {
     buffers: {
       position: new Cls(new Float32Array(maxParticles * 4), 4),
@@ -486,9 +486,10 @@ function createModifierStorageBuffers(maxParticles, instanced, curveData, hasFor
       startValues: new Cls(new Float32Array(maxParticles * 4), 4),
       startColorsExt: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
       orbitalIsActive: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
-      curveData: new StorageBufferAttribute(arr, 1)
+      allocator: new StorageBufferAttribute(allocatorData, 1),
+      packedData
     },
-    freeListOffset: freeListStart
+    allocatorCount
   };
 }
 function createCurveLookup(sCurveData) {
@@ -503,7 +504,7 @@ function createCurveLookup(sCurveData) {
     return mix(v0, v1, f);
   });
 }
-function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, shapeParams, forceFieldCount = 0, collisionPlaneCount = 0, freeListStart = 0) {
+function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, shapeParams, forceFieldCount = 0, collisionPlaneCount = 0) {
   const uDelta = uniform(float(0));
   const uDeltaMs = uniform(float(0));
   const uGravityVelocity = uniform(new Vector3(0, 0, 0));
@@ -553,20 +554,20 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const sSV = storage(buffers.startValues, "vec4", maxParticles);
   const sEx = storage(buffers.startColorsExt, "vec4", maxParticles);
   const sOIA = storage(buffers.orbitalIsActive, "vec4", maxParticles);
-  const sCD = storage(buffers.curveData, "float", buffers.curveData.array.length);
+  const allocatorCount = maxParticles + 1;
+  const sAllocator = storage(buffers.allocator, "uint", allocatorCount).toAtomic();
+  const sCD = buffer(buffers.packedData, "float", buffers.packedData.length);
   const curveLen = Math.max(curveMap.data.length, 1);
   const forceFieldOffset = curveLen;
   const collisionOffset = forceFieldOffset + (flags.forceFields ? FORCE_FIELD_DATA_SIZE : 0);
-  const flStart = freeListStart;
-  const flStartNode = float(freeListStart);
   const ffNodes = flags.forceFields ? createForceFieldTSL(sCD, forceFieldOffset, forceFieldCount) : null;
   const cpNodes = flags.collisionPlanes ? createCollisionPlaneTSL(sCD, collisionOffset, collisionPlaneCount) : null;
   const lookupCurve = createCurveLookup(sCD);
   const emitKernel = Fn(() => {
     const i = instanceIndex;
-    const oldTop = atomicSub(sCD.element(flStart), float(1)).toVar();
-    If(oldTop.greaterThan(float(0)), () => {
-      const slotIdx = sCD.element(flStartNode.add(oldTop)).toVar();
+    const oldTop = atomicSub(sAllocator.element(0), uint(1)).toVar();
+    If(oldTop.greaterThan(uint(0)), () => {
+      const slotIdx = atomicLoad(sAllocator.element(oldTop)).toVar();
       const base2 = i.mul(float(8));
       const r0 = rand(uSeed.add(base2.add(float(0.13))));
       const r1 = rand(uSeed.add(base2.add(float(1.17))));
@@ -727,8 +728,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           const inactive = sOIA.element(i).toVar();
           sOIA.element(i).assign(vec4(inactive.x, inactive.y, inactive.z, float(0)));
           sCol.element(i).assign(vec4(float(0), float(0), float(0), float(0)));
-          const top = atomicAdd(sCD.element(flStart), float(1)).toVar();
-          sCD.element(flStartNode.add(top).add(float(1))).assign(float(i));
+          const oldTop = atomicAdd(sAllocator.element(0), uint(1)).toVar();
+          atomicStore(sAllocator.element(oldTop.add(uint(1))), uint(i));
         });
       });
     });
@@ -753,14 +754,15 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
     },
     shapeUniforms,
     buffers,
-    freeListOffset: flStart,
+    allocatorCount,
+    packedDataNode: sCD,
     forceFieldInfo: ffNodes ? { offset: forceFieldOffset, countUniform: ffNodes.countUniform } : null,
     collisionPlaneInfo: cpNodes ? { offset: collisionOffset, countUniform: cpNodes.countUniform } : null
   };
 }
 function select01(kind, cone, sphere, planeVal) {
-  const isCone = floor(kind).equals(float(0));
-  const isSph = floor(kind).equals(float(1));
+  const isCone = floor(kind).equal(float(0));
+  const isSph = floor(kind).equal(float(1));
   const tmp = mix(cone, sphere, 0);
   isCone.toVar();
   const r = mix(planeVal, tmp, abs(isCone.sub(float(1))).min(abs(isSph.sub(float(1)))));
@@ -1499,8 +1501,7 @@ function createComputePipeline(maxParticles, instanced, normalizedConfig, partic
     flags,
     shapeParams,
     forceFieldCount,
-    collisionPlaneCount,
-    built.freeListOffset
+    collisionPlaneCount
   );
 }
 
