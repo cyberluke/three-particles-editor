@@ -943,8 +943,12 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     const baseGeometry = rrType === "MESH" /* MESH */ && meshGeometry ? meshGeometry : new THREE3.BufferGeometry();
     if (rrType !== "MESH" /* MESH */ || !meshGeometry) {
       const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
+      const quadUV = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+      const quadNormal = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
       const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
       baseGeometry.setAttribute("position", new THREE3.BufferAttribute(quad, 3));
+      baseGeometry.setAttribute("uv", new THREE3.BufferAttribute(quadUV, 2));
+      baseGeometry.setAttribute("normal", new THREE3.BufferAttribute(quadNormal, 3));
       baseGeometry.setIndex(new THREE3.BufferAttribute(idx, 1));
     }
     g.setAttribute("position", baseGeometry.getAttribute("position"));
@@ -964,6 +968,27 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     g.setDrawRange(0, maxParticles);
     geometry = g;
     g.instanceCount = maxParticles;
+  }
+  if (import.meta.env?.DEV !== false) {
+    const required = useInstancing ? [
+      "position",
+      // quad / mesh vertex positions
+      "instanceOffset",
+      // GPU particle position
+      "instanceColor",
+      // GPU particle RGBA
+      "instanceParticleState",
+      // GPU packed state vec4
+      "instanceStartValues"
+      // GPU packed initial-state vec4
+    ] : ["position", "color", "particleState", "startValues"];
+    for (const name of required) {
+      if (!geometry.getAttribute(name)) {
+        throw new Error(
+          "three-particles: " + (useInstancing ? "instanced" : "POINTS") + " geometry " + name + " is missing its required contract attribute."
+        );
+      }
+    }
   }
   const particleSystem = useInstancing ? new THREE3.Mesh(geometry, material) : new THREE3.Points(geometry, material);
   particleSystem.frustumCulled = false;
@@ -1020,9 +1045,13 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       rotation: buffers.particleState,
       color: buffers.color
     },
-    scalarArray: new Float32Array(maxParticles * SCALAR_STRIDE),
+    // ?? Deprecated zero-size sentinels (GPU-only v4) ????
+    // These legacy CPU particle-state fields are not authoritative anymore: the
+    // compute kernels own the state in GPU storage. Only the TRAIL path (which
+    // throws in v4) consumed them, so they are 0-length placeholders.
+    scalarArray: new Float32Array(0),
     scalarInterleavedBuffer: new THREE3.InterleavedBuffer(
-      new Float32Array(maxParticles * SCALAR_STRIDE),
+      new Float32Array(0),
       SCALAR_STRIDE
     ),
     elapsedUniform,
@@ -1086,7 +1115,13 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     dispose,
     update,
     updateConfig,
-    getActiveParticleCount: () => maxParticles,
+    /**
+     * ?? Deprecated synchronous active count ????
+     * Returns -1 (= unsupported) in the GPU-only engine: the authoritative count
+     * is `maxParticles - allocator[0]` which lives in GPU storage and is only
+     * available through an explicit (throttled) `getArrayBufferAsync` read-back.
+     */
+    getActiveParticleCount: () => -1,
     computeNode: pipeline.computeNodes ?? pipeline.computeNode
   };
 };

@@ -370,32 +370,22 @@ document.getElementById('bench-run').addEventListener('click', async () => {
 const grid = document.getElementById('examples-grid');
 for (const e of examples) grid.appendChild(buildCard(e));
 
+// Metadata-only snapshot. The CPU BufferAttribute arrays are upload-only mirrors
+// of the GPU storage in this GPU-only engine, so no per-particle CPU scan is done.
 function debugSnapshot(tag, ctx) {
   if (!ctx || !ctx.system || !ctx.system.instance) { console.warn(`[${tag}] no system`); return; }
   const geo = ctx.system.instance.geometry;
   const n = ctx.system.instance.instanceCount ?? geo?.instanceCount ?? 0;
-  const col = geo && geo.getAttribute('instanceColor');
-  let alive = 0, firstNonZero = null;
-  if (col && col.array) {
-    const a = col.array;
-    for (let i = 0; i < n; i++) {
-      if (a[i * 4 + 3] > 0) { alive++; if (firstNonZero === null) firstNonZero = i; }
-    }
-  }
-  const offs = geo && geo.getAttribute('instanceOffset');
-  const off = offs && offs.array ? [ [+offs.array[0], +offs.array[1], +offs.array[2]],
-    (+offs.array[3]||0)?[+offs.array[3],+offs.array[4],+offs.array[5]]:null,
-    (+offs.array[6]||0)?[+offs.array[6],+offs.array[7],+offs.array[8]]:null,
-    (+offs.array[9]||0)?[+offs.array[9],+offs.array[10],+offs.array[11]]:null ] : [];
-  console.log(`[${tag}] ${ctx.id} ${ctx.elapsed.toFixed(2)}s`,
-    { maxParticles: ctx.cfg.maxParticles,
-      instanceCount: n, alive, firstNonZero,
-      offsetProbe: off,
-      material: ctx.system.instance.material?.type,
-      computeNode: !!ctx.system.computeNode,
-      map: ctx.system.instance.material?.uniforms?.map?.value?.image ? 'loaded' : (ctx.system.instance.material?.uniforms?.map?.value ? 'in-flight':'none'),
-      canvas: [ctx.renderer.domElement.width | 0, ctx.renderer.domElement.height | 0]
-    });
+  const m = ctx.system.instance.material;
+  console.log(`[${tag}] ${ctx.id} ${ctx.elapsed.toFixed(2)}s`, {
+    rendererType: ctx.cfg.renderer?.rendererType || "POINTS",
+    maxParticles: ctx.cfg.maxParticles,
+    instanceCount: n,
+    material: m?.type,
+    computeNodeCount: ctx.system.computePipeline?.computeNodes?.length ?? (ctx.system.computeNode ? 1 : 0),
+    map: m?.uniforms?.map?.value?.image ? "loaded" : (m?.uniforms?.map?.value ? "in-flight" : "none"),
+    canvas: [ctx.renderer.domElement.width | 0, ctx.renderer.domElement.height | 0]
+  });
 }
 setTimeout(() => {
   for (const [id, ctx] of cards.entries()) debugSnapshot('init', ctx);
