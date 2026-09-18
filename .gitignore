@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Oracle reference worktree (git worktree of 9740f96; not part of the repo)
+three-particles-oracle-9740f96/
+
 # Build outputs
 public/build/
 

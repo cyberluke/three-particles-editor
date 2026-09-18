@@ -1,5 +1,10 @@
-// examples.js ??? offline mirror for @cyberluke/three-particles 4.0.0 (GPU-only).
+// examples.js — offline mirror for @cyberluke/three-particles 4.0.0 (GPU-only).
 // Three.js r0.186 exposes `WebGPURenderer` under `three/webgpu`.
+//
+// Rescue-pass diagnostics: [PS:*] milestone logs, automatic bounded GPU
+// read-back probes with spatial statistics, card progress line, staged
+// BIRTH_ONLY debug modes. All debug state lives in this harness — the engine
+// API is unchanged.
 
 import * as THREE from 'three/webgpu';
 import {
@@ -10,9 +15,15 @@ import {
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
 import { examples } from './lib/examples-data.js?v=5';
 
+/** Rescue-mode debug switch (drop to false once parity is signed off). */
+const PARTICLE_DEBUG = true;
+
 // Version stamp comes straight from the built engine module.
 const verEl = document.getElementById('version-static');
 if (verEl) verEl.textContent = `v${REVISION} (local)`;
+
+// ─── automatic milestone probes (no manual DevTools commands needed) ───
+const MILESTONES_MS = [100, 250, 500, 1000, 2000, 5000, 10000];
 
 // ms-based clock shared by every per-card + expand stats line.
 function makeClock() {
@@ -77,9 +88,6 @@ const MESH_GEOMETRIES = {
 };
 
 // ─── GPU-only prepareConfig ───
-// 4.x has a single backend: the engine itself rejects everything that isn't
-// the native WebGPU compute path, so `prepareConfig` never branches. POINTS
-// is promoted to INSTANCED because WGSL lacks gl_PointCoord.
 function prepareConfig(cfg0, textureId, meshType) {
   const cfg = JSON.parse(JSON.stringify(cfg0 || {}));
   delete cfg._editorData;
@@ -106,11 +114,201 @@ function prepareConfig(cfg0, textureId, meshType) {
   return cfg;
 }
 
+// ─── Staged birth diagnosis (debug-harness only; configs cloned, not mutated)
+// 0 BIRTH_ONLY | 1 +INTEGRATION | 2 +FORCE_FIELDS | 3 +ORBITAL | 4 +NOISE
+// | 5 +LIFETIME_VISUALS (full config).
+const STAGES = ['0:BIRTH_ONLY', '1:+INTEGRATION', '2:+FORCE_FIELDS', '3:+ORBITAL', '4:+NOISE', '5:+LIFETIME_VISUALS'];
+function applyStage(cfg, stage) {
+  const v = cfg.velocityOverLifetime || {};
+  if (stage >= 1) v.isActive = true; else v.isActive = false;
+  if (stage < 3) {
+    v.orbital = { x: 0, y: 0, z: 0 };
+  }
+  if (stage < 2) cfg.forceFields = [];
+  if (stage < 4) { if (cfg.noise) cfg.noise.isActive = false; }
+  if (stage < 5) {
+    if (cfg.sizeOverLifetime) cfg.sizeOverLifetime.isActive = false;
+    if (cfg.opacityOverLifetime) cfg.opacityOverLifetime.isActive = false;
+    if (cfg.colorOverLifetime) cfg.colorOverLifetime.isActive = false;
+    if (cfg.rotationOverLifetime) cfg.rotationOverLifetime.isActive = false;
+    // linear axis of velocityOverLifetime: keep (>=1), kill otherwise
+    if (stage < 1 && v.linear) v.linear = { x: 0, y: 0, z: 0 };
+  }
+  return cfg;
+}
+
+// ─── Diagnostics helpers ───
+function median(arr) {
+  const s = arr.slice().sort((a, b) => a - b);
+  return s.length ? s[Math.floor(s.length / 2)] : 0;
+}
+
+// Small deterministic statistics over the sampled GPU slots (§9/§10).
+function computeSampleStats(chunks) {
+  let pMin = [Infinity, Infinity, Infinity];
+  let pMax = [-Infinity, -Infinity, -Infinity];
+  let pSum = [0, 0, 0], pSumSq = [0, 0, 0];
+  let radSum = 0, radMin = Infinity, radMax = -Infinity;
+  let vMin = Infinity, vMax = -Infinity, vSum = 0;
+  let dirSum = [0, 0, 0];
+  let cMin = [Infinity, Infinity, Infinity, Infinity];
+  let cMax = [-Infinity, -Infinity, -Infinity, Infinity === Infinity ? -Infinity : -Infinity];
+  cMax = [-Infinity, -Infinity, -Infinity, -Infinity];
+  let cSum = [0, 0, 0], aSum = 0;
+  let lifeMin = Infinity, lifeMax = -Infinity, lifeSum = 0, sLifeSum = 0;
+  let n = 0, active = 0;
+  const uniq = { pos: new Set(), vel: new Set() };
+  for (const ch of chunks) {
+    const pos = ch.pos, vel = ch.vel, col = ch.col, pstate = ch.ps, oia = ch.oia;
+    for (let s = 0; s < ch.count; s++) {
+      const o = s * 4;
+      const isActive = oia[o + 3] >= 0.5 || col[o + 3] > 0;
+      if (!isActive) continue;
+      active++;
+      const px = pos[o], py = pos[o + 1], pz = pos[o + 2];
+      const vx = vel[o], vy = vel[o + 1], vz = vel[o + 2];
+      const p = [px, py, pz];
+      for (let k = 0; k < 3; k++) {
+        pMin[k] = Math.min(pMin[k], p[k]);
+        pMax[k] = Math.max(pMax[k], p[k]);
+        pSum[k] += p[k];
+        pSumSq[k] += p[k] * p[k];
+      }
+      const r = Math.hypot(px, py, pz);
+      radSum += r; radMin = Math.min(radMin, r); radMax = Math.max(radMax, r);
+      const sp = Math.hypot(vx, vy, vz);
+      vMin = Math.min(vMin, sp); vMax = Math.max(vMax, sp); vSum += sp;
+      if (sp > 1e-9) {
+        dirSum[0] += vx / sp; dirSum[1] += vy / sp; dirSum[2] += vz / sp;
+      }
+      for (let k = 0; k < 4; k++) {
+        cMin[k] = Math.min(cMin[k], col[o + k]);
+        cMax[k] = Math.max(cMax[k], col[o + k]);
+        if (k < 3) cSum[k] += col[o + k];
+      }
+      aSum += col[o + 3];
+      lifeSum += pstate[o];
+      sLifeSum += ch.sv[o];
+      lifeMin = Math.min(lifeMin, pstate[o]);
+      lifeMax = Math.max(lifeMax, pstate[o]);
+      uniq.pos.add(`${px.toFixed(4)},${py.toFixed(4)},${pz.toFixed(4)}`);
+      uniq.vel.add(`${vx.toFixed(4)},${vy.toFixed(4)},${vz.toFixed(4)}`);
+      n++;
+    }
+  }
+  const mean = pSum.map((v) => (n ? v / n : 0));
+  const std = pSumSq.map((v, k) =>
+    n ? Math.sqrt(Math.max(0, v / n - mean[k] * mean[k])) : 0
+  );
+  const anisotropy = std.map((v) => (v > 1e-6 ? v : 1e-6));
+  const aniso = Math.max(...std) / Math.max(Math.min(...anisotropy), 1e-6);
+  const coh = Math.hypot(...dirSum) / Math.max(1, active);
+  return {
+    activeInSample: active,
+    position: {
+      minXYZ: pMin.map((v) => (v === Infinity ? null : +v.toFixed(3))),
+      maxXYZ: pMax.map((v) => (v === -Infinity ? null : +v.toFixed(3))),
+      meanXYZ: mean.map((v) => +v.toFixed(3)),
+      stdXYZ: std.map((v) => +v.toFixed(3)),
+      radialMin: radMin === Infinity ? null : +radMin.toFixed(3),
+      radialMax: radMax === -Infinity ? null : +radMax.toFixed(3),
+      radialMean: n ? +(radSum / n).toFixed(3) : 0,
+    },
+    velocity: {
+      minSpeed: vMin === Infinity ? null : +vMin.toFixed(3),
+      maxSpeed: vMax === -Infinity ? null : +vMax.toFixed(3),
+      meanSpeed: n ? +(vSum / n).toFixed(3) : 0,
+      meanDirectionXYZ: dirSum.map((v) => +((v / Math.max(1, active))).toFixed(3)),
+      directionCoherence: +coh.toFixed(3),
+    },
+    color: {
+      minRGB: cMin.slice(0, 3).map((v) => +v.toFixed(3)),
+      maxRGB: cMax.slice(0, 3).map((v) => +v.toFixed(3)),
+      meanRGB: cSum.map((v) => +(v / Math.max(1, n)).toFixed(3)),
+      alphaMin: +cMin[3].toFixed(3), alphaMax: +cMax[3].toFixed(3),
+      alphaMean: +(aSum / Math.max(1, n)).toFixed(3),
+    },
+    lifetime: {
+      min: lifeMin === Infinity ? null : +lifeMin.toFixed(1),
+      max: lifeMax === -Infinity ? null : +lifeMax.toFixed(1),
+      mean: n ? +(lifeSum / n).toFixed(1) : 0,
+      startMeanMs: n ? +(sLifeSum / n).toFixed(1) : 0,
+    },
+    anisotropy: +aniso.toFixed(2),
+    uniquePositions: uniq.pos.size,
+    uniqueVelocities: uniq.vel.size,
+  };
+}
+
+// Automatic bounded GPU read-back: allocator counter + up to 256 particle
+// slots across deterministic windows (§8). Never reads the full pool.
+async function runProbe(ctx, tag) {
+  const dbg = ctx.system && ctx.system.gpuDebug;
+  if (!dbg || !ctx.renderer.getArrayBufferAsync) return null;
+  const maxParticles = dbg.maxParticles;
+  const wins = [];
+  const add = (first, count) =>
+    wins.push([first, Math.min(count, maxParticles - first)]);
+  add(0, 64); add(Math.floor(maxParticles * 0.25), 64);
+  if (maxParticles > 192) add(Math.floor(maxParticles * 0.5), 64);
+  if (maxParticles > 320) add(Math.floor(maxParticles * 0.75), 64);
+  add(Math.max(0, maxParticles - 64), 64);
+  const readW = async (attr, first, count) =>
+    new Float32Array(await ctx.renderer.getArrayBufferAsync(
+      attr, null, first * 16, count * 16
+    ));
+  const chunks = [];
+  for (const [first, count] of wins) {
+    const [pos, vel, col, ps, sv, oia] = await Promise.all([
+      readW(dbg.buffers.position, first, count),
+      readW(dbg.buffers.velocity, first, count),
+      readW(dbg.buffers.color, first, count),
+      readW(dbg.buffers.particleState, first, count),
+      readW(dbg.buffers.startValues, first, count),
+      readW(dbg.buffers.orbitalIsActive, first, count),
+    ]);
+    chunks.push({ pos, vel, col, ps, sv, oia, count, first });
+  }
+  const allocAB = await ctx.renderer.getArrayBufferAsync(
+    dbg.buffers.allocator, null, 0, 4
+  );
+  const births = new Uint32Array(allocAB)[0];
+  const stats = computeSampleStats(chunks);
+  const out = {
+    atMs: Math.round(ctx.elapsed * 1000),
+    maxParticles,
+    birthsTotal: births,
+    ringRecycled: births > maxParticles,
+    lastEmit: dbg.lastEmitCount(),
+    sampleSlots: chunks.reduce((m, c) => m + c.count, 0),
+    ...stats,
+  };
+  console.log(`[PS:probe:${tag}] ${ctx.id}`, out);
+  updateProgressLine(ctx, out);
+  return out;
+}
+
+// Compact progress line on the card (§27) — updated from each probe result.
+function updateProgressLine(ctx, p) {
+  const st = document.getElementById('stats-' + ctx.id);
+  if (!st || !p) return;
+  const texOk = ctx.system.gpuDebug?.snapshot?.().textureResolved ? '✓' : '-';
+  const shape = ctx.system.gpuDebug?.snapshot?.().shape?.publicShape || '?';
+  const anisoTxt =
+    p.anisotropy > 10 ? `ANISOTROPY ${p.anisotropy}x`
+    : `σ ${p.position.stdXYZ[0]}/${p.position.stdXYZ[1]}/${p.position.stdXYZ[2]}`;
+  st.textContent =
+    `GPU emit/sim ✓ | active ${p.activeInSample}/${p.sampleSlots} (births ${p.birthsTotal}) | ` +
+    `shape ${shape} | ${anisoTxt} | tex ${texOk}`;
+}
+
 // ─── Per-card ctx map (one WebGPU renderer per visible card) ───
 const cards = new Map();
 let activeId = null, activeLoop = 0;
+let cardStage = 5; // full config by default
+let expandStage = 5;
 
-async function makeCtx(id, entry) {
+async function makeCtx(id, entry, stage = 5) {
   const canvas = document.getElementById('canvas-' + id);
   if (!canvas) return null;
   const renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
@@ -131,22 +329,46 @@ async function makeCtx(id, entry) {
   );
   plane.rotation.x = -Math.PI / 2;
   scene.add(plane);
-  const cfg = prepareConfig(entry.config, entry.textureId, entry.meshType);
+  let cfg = prepareConfig(entry.config, entry.textureId, entry.meshType);
   if (!cfg.renderer) cfg.renderer = {};
   cfg.renderer.materialBackend = 'TSL';
-  const system = createParticleSystem(cfg);
+  applyStage(cfg, stage); // mutates the plain-object part; map/textures stay.
+  const merged = cfg;
+  const system = createParticleSystem(merged);
   scene.add(system.instance);
-  const ctx = { id, renderer, scene, camera, system, paused: false, elapsed: 0, clock: makeClock(), cfg };
+  const snap = system.gpuDebug?.snapshot ? system.gpuDebug.snapshot() : null;
+  console.log(`[PS:create] card #${id}`, {
+    rendererType: snap?.rendererType ?? merged.renderer?.rendererType,
+    simulationSpace: snap?.simulationSpace ?? merged.simulationSpace,
+    maxParticles: snap?.maxParticles ?? merged.maxParticles,
+    stage: STAGES[stage],
+  });
+  console.log(`[PS:config] card #${id}`, snap);
+  console.log(`[PS:pipeline] card #${id}`, {
+    passes: system.gpuDebug?.allPassNames ?? system.gpuDebug?.passNames,
+    storageBindings: system.gpuDebug?.storageBindingCount,
+    curveTables: merged ? undefined : undefined,
+  });
+  const ctx = {
+    id, renderer, scene, camera, system, paused: false, elapsed: 0,
+    clock: makeClock(), cfg: merged, snap, stage,
+    frames: [], milestoneIdx: 0, probeBusy: false,
+    lastBucket: '',
+  };
   cards.set(id, ctx);
   return ctx;
 }
 
 async function playCard(id) {
   let ctx = cards.get(id);
-  if (!ctx) {
+  if (!ctx || ctx.stage !== cardStage) {
+    if (ctx && ctx.stage !== cardStage) {
+      try { ctx.system.dispose?.(); ctx.renderer.dispose?.(); } catch {}
+      cards.delete(id);
+    }
     const e = examples.find((x) => x.id === id);
     if (!e) return;
-    ctx = await makeCtx(id, e);
+    ctx = await makeCtx(id, e, cardStage);
   }
   if (!ctx) return;
   if (activeId && activeId !== id) {
@@ -155,30 +377,64 @@ async function playCard(id) {
   }
   activeId = id;
   ctx.clock.getDelta();
-  if (!('dbgLast' in ctx)) { ctx.dbgLast = 0; ctx.dbgTicks = 0; }
+  ctx.milestoneIdx = 0;
   document.querySelectorAll('.card').forEach((c) => c.classList.toggle('active', c.dataset.name === id));
   const step = () => {
     if (activeId !== id) return;
     const d = ctx.clock.getDelta();
     ctx.elapsed += d;
-    ctx.dbgTicks++;
+    ctx.frames.push(d);
+    if (ctx.frames.length > 32) ctx.frames.shift();
     if (!ctx.paused) {
       updateParticleSystems({ now: Date.now(), delta: d, elapsed: ctx.elapsed });
       if (ctx.system.computeNode) ctx.renderer.compute(ctx.system.computeNode);
     }
     ctx.renderer.render(ctx.scene, ctx.camera);
     const st = document.getElementById('stats-' + id);
-    if (st) st.textContent = `${(1 / Math.max(d, 1e-4)).toFixed(0)} FPS ${(d * 1000).toFixed(1)}ms +${ctx.elapsed.toFixed(1)}s`;
-    // Event-based diagnostics (no per-second spam): one snapshot on the first
-    // rendered frame per card, plus the `init` pass and `window.__probeGPU(id)`.
-    if (ctx.dbgTicks === 1) debugSnapshot('frame1', ctx);
+    if (st) {
+      const med = median(ctx.frames) || d;
+      const fps = 1 / Math.max(med, 1e-4);
+      if (!String(st.textContent).startsWith('GPU emit')) {
+        st.textContent = `${fps.toFixed(0)} FPS (median ${(med * 1000).toFixed(1)}ms)`;
+      } else {
+        st.dataset.fps = `${fps.toFixed(0)} FPS (median ${(med * 1000).toFixed(1)}ms) | `;
+      }
+    }
+    const elMs = ctx.elapsed * 1000;
+    // frame 1
+    if (ctx.frames.length === 1 && !ctx.frame1Logged) {
+      ctx.frame1Logged = true;
+      console.log(`[PS:frame:1] ${id} first frame presented`);
+    }
+    if (PARTICLE_DEBUG && !ctx.probeBusy) {
+      while (
+        ctx.milestoneIdx < MILESTONES_MS.length &&
+        elMs >= MILESTONES_MS[ctx.milestoneIdx]
+      ) {
+        const tag = `${MILESTONES_MS[ctx.milestoneIdx]}ms`;
+        ctx.milestoneIdx++;
+        ctx.probeBusy = true;
+        runProbe(ctx, tag).finally(() => { ctx.probeBusy = false; });
+      }
+      // After the 10 s milestone: state-change-only logging (§26).
+      if (ctx.milestoneIdx >= MILESTONES_MS.length && elMs > 0) {
+        const dbg = ctx.system.gpuDebug;
+        const bucket = dbg
+          ? `${Math.min(2, Math.floor(dbg.lastEmitCount() / 1) || 0)}|${Math.min(4, Math.floor((ctx.system.gpuDebug.buffers.allocator?.array?.[0] || 0) / Math.max(1, ctx.snap?.maxParticles || 1) * 3))}`
+          : '';
+        if (bucket && bucket !== ctx.lastBucket) {
+          ctx.lastBucket = bucket;
+          console.log(`[PS:state] ${id} @${elMs.toFixed(0)}ms emit=${bucket}`);
+        }
+      }
+    }
     activeLoop = requestAnimationFrame(step);
   };
   activeLoop = requestAnimationFrame(step);
 }
 
 // ─── Expand modal (one persistent WebGPU renderer reused across entries) ───
-const exp = { id: null, renderer: null, scene: null, camera: null, system: null, clock: null, paused: false, elapsed: 0, loop: 0, cfg: null };
+const exp = { id: null, renderer: null, scene: null, camera: null, system: null, clock: null, paused: false, elapsed: 0, loop: 0, cfg: null, ctxLike: null, milestoneIdx: 0, probeBusy: false, frames: [] };
 async function openExpand(id) {
   const entry = examples.find((e) => e.id === id);
   if (!entry) return;
@@ -203,33 +459,50 @@ async function openExpand(id) {
     cam.position.set(0, 0, 6);
     exp.scene = scene; exp.camera = cam;
   }
-  const cfg = prepareConfig(entry.config, entry.textureId, entry.meshType);
+  let cfg = prepareConfig(entry.config, entry.textureId, entry.meshType);
   if (!cfg.renderer) cfg.renderer = {};
   cfg.renderer.materialBackend = 'TSL';
+  cfg = applyStage(cfg, expandStage);
   try { exp.system?.dispose?.(); } catch {}
   exp.system = createParticleSystem(cfg);
   while (exp.scene.children.length > 1) exp.scene.remove(exp.scene.children[exp.scene.children.length - 1]);
   exp.scene.add(exp.system.instance);
-  exp.clock = makeClock(); exp.elapsed = 0; exp.cfg = cfg;
+  exp.clock = makeClock(); exp.elapsed = 0; exp.cfg = cfg; exp.milestoneIdx = 0;
+  exp.ctxLike = { id: id, renderer: exp.renderer, system: exp.system, get elapsed() { return exp.elapsed; } };
   document.getElementById('expand-renderer-label').textContent = cfg.renderer.rendererType;
-  // 4.x is GPU-only; the single label is enough (no toggle).
   document.getElementById('expand-backend-label').textContent = 'GPU';
   cancelAnimationFrame(exp.loop);
   const fEl = document.getElementById('expand-fps');
   const tEl = document.getElementById('expand-frametime');
   const eEl = document.getElementById('expand-elapsed');
+  exp.frames = [];
   const loop = () => {
     if (!document.getElementById('expand-overlay').classList.contains('open')) return;
     const d = exp.clock.getDelta();
     exp.elapsed += d;
+    exp.frames.push(d);
+    if (exp.frames.length > 32) exp.frames.shift();
     if (!exp.paused) {
       updateParticleSystems({ now: Date.now(), delta: d, elapsed: exp.elapsed });
       if (exp.system.computeNode) exp.renderer.compute(exp.system.computeNode);
     }
     exp.renderer.render(exp.scene, exp.camera);
-    if (fEl) fEl.textContent = `${(1 / Math.max(d, 1e-4)).toFixed(0)} FPS`;
-    if (tEl) tEl.textContent = `${(d * 1000).toFixed(1)} ms/tick`;
+    const med = median(exp.frames) || d;
+    if (fEl) fEl.textContent = `${(1 / Math.max(med, 1e-4)).toFixed(0)} FPS (median ${(med * 1000).toFixed(1)}ms/tick)`;
+    if (tEl) tEl.textContent = `last ${(d * 1000).toFixed(1)} ms`;
     if (eEl) eEl.textContent = `${exp.elapsed.toFixed(1)}s`;
+    const elMs = exp.elapsed * 1000;
+    if (PARTICLE_DEBUG && !exp.probeBusy) {
+      while (
+        exp.milestoneIdx < MILESTONES_MS.length &&
+        elMs >= MILESTONES_MS[exp.milestoneIdx]
+      ) {
+        const tag = `${MILESTONES_MS[exp.milestoneIdx]}ms`;
+        exp.milestoneIdx++;
+        exp.probeBusy = true;
+        runProbe(exp.ctxLike, tag).finally(() => { exp.probeBusy = false; });
+      }
+    }
     exp.loop = requestAnimationFrame(loop);
   };
   exp.loop = requestAnimationFrame(loop);
@@ -263,6 +536,21 @@ function buildCard(entry) {
   const ctrl = document.createElement('div'); ctrl.className = 'card-controls';
   const gpuChip = document.createElement('span');
   gpuChip.className = 'tag'; gpuChip.textContent = hasWebGPU() ? 'GPU' : 'no WebGPU';
+  const stageSel = document.createElement('select');
+  stageSel.className = 'tag';
+  STAGES.forEach((s, i) => {
+    const o = document.createElement('option');
+    o.value = String(i); o.textContent = s;
+    if (i === cardStage) o.selected = true;
+    stageSel.appendChild(o);
+  });
+  stageSel.title = 'Debug birth stage (cloned config; engine untouched)';
+  stageSel.addEventListener('change', () => {
+    cardStage = Number(stageSel.value) || 0;
+    const c = cards.get(entry.id);
+    if (c) { try { c.system.dispose?.(); c.renderer.dispose?.(); } catch {} cards.delete(entry.id); }
+    if (activeId === entry.id) playCard(entry.id);
+  });
   const btns = document.createElement('div'); btns.className = 'card-btns';
   const ib = (svg, title) => { const b = document.createElement('button'); b.className = 'icon-btn'; b.title = title; b.innerHTML = svg; return b; };
   const pB = ib('<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20" fill="currentColor"/></svg>', 'Play');
@@ -271,7 +559,7 @@ function buildCard(entry) {
   const cB = ib('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>', 'Copy config');
   const dB = ib('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>', 'Download config');
   pB.addEventListener('click', async () => { await playCard(entry.id); pB.classList.toggle('playing'); });
-  rB.addEventListener('click', () => { const c = cards.get(entry.id); if (c) { c.elapsed = 0; c.clock && c.clock.getDelta(); } });
+  rB.addEventListener('click', () => { const c = cards.get(entry.id); if (c) { c.elapsed = 0; c.milestoneIdx = 0; c.clock && c.clock.getDelta(); } });
   eB.addEventListener('click', () => openExpand(entry.id));
   cB.addEventListener('click', async () => { if (navigator.clipboard) await navigator.clipboard.writeText(JSON.stringify(entry.config, null, 2)); cB.classList.add('copied'); setTimeout(() => cB.classList.remove('copied'),1200); });
   dB.addEventListener('click', () => {
@@ -280,7 +568,7 @@ function buildCard(entry) {
     a.download = `${entry.id}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href),100);
   });
   btns.append(pB, rB, eB, cB, dB);
-  ctrl.append(gpuChip, btns); info.appendChild(ctrl); card.appendChild(info);
+  ctrl.append(gpuChip, stageSel, btns); info.appendChild(ctrl); card.appendChild(info);
   return card;
 }
 
@@ -290,7 +578,7 @@ document.getElementById('expand-close').addEventListener('click', () => {
   cancelAnimationFrame(exp.loop);
 });
 document.getElementById('expand-playpause-btn').addEventListener('click', () => (exp.paused = !exp.paused));
-document.getElementById('expand-restart-btn').addEventListener('click', () => (exp.elapsed = 0));
+document.getElementById('expand-restart-btn').addEventListener('click', () => { exp.elapsed = 0; exp.milestoneIdx = 0; });
 document.getElementById('expand-copy-btn')?.addEventListener('click', async () => {
   const e = examples.find((x) => x.id === exp.id);
   if (e && navigator.clipboard) await navigator.clipboard.writeText(JSON.stringify(e.config, null, 2));
@@ -337,10 +625,11 @@ async function benchGpu(maxParticles, iters = 30) {
     const t1 = performance.now();
     times[i] = t1 - t0;
   }
-  times.sort((a, b) => a - b);
-  const medianMs = times[times.length >> 1];
+  const minMs = Math.min(...times);
+  const medianMs = median(times);
+  const p95 = times.slice().sort((a, b) => a - b)[Math.floor(times.length * 0.95)] ?? medianMs;
   try { sys.dispose?.(); rr.dispose?.(); } catch {}
-  return { backend: `${(maxParticles / 1000).toFixed(0)}k`, fps: 1000 / Math.max(medianMs, 1e-3), medianMs, minMs: times[0], maxMs: times[times.length - 1] };
+  return { backend: `${(maxParticles / 1000).toFixed(0)}k`, fps: 1000 / Math.max(medianMs, 1e-3), medianMs, minMs, maxMs: Math.max(...times), p95 };
 }
 function drawBars(rs) {
   const ctx = benchChart.getContext('2d'); const W = benchChart.width, H = benchChart.height;
@@ -368,91 +657,19 @@ document.getElementById('bench-run').addEventListener('click', async () => {
   } catch (e) { benchStatus.textContent = 'error: ' + (e && e.message ? e.message : e); }
 });
 
-// ─── Grid + one-shot snapshot ───
+// ─── Grid ───
 const grid = document.getElementById('examples-grid');
 for (const e of examples) grid.appendChild(buildCard(e));
 
-// Metadata-only snapshot. The CPU BufferAttribute arrays are upload-only mirrors
-// of the GPU storage in this GPU-only engine, so no per-particle CPU scan is done.
-function debugSnapshot(tag, ctx) {
-  if (!ctx || !ctx.system || !ctx.system.instance) { console.warn(`[${tag}] no system`); return; }
-  const geo = ctx.system.instance.geometry;
-  const n = ctx.system.instance.instanceCount ?? geo?.instanceCount ?? 0;
-  const m = ctx.system.instance.material;
-  console.log(`[${tag}] ${ctx.id} ${ctx.elapsed.toFixed(2)}s`, {
-    rendererType: ctx.cfg.renderer?.rendererType || "POINTS",
-    maxParticles: ctx.cfg.maxParticles,
-    instanceCount: n,
-    material: m?.type,
-    // ParticleSystem exposes computeNode (a [emitNode, simNode] array in the
-    // GPU-only engine); the old computePipeline lookup never resolved.
-    computeNodeCount: Array.isArray(ctx.system.computeNode)
-      ? ctx.system.computeNode.length
-      : (ctx.system.computeNode ? 1 : 0),
-    map: m?.uniforms?.map?.value?.image ? "loaded" : (m?.uniforms?.map?.value ? "in-flight" : "none"),
-    canvas: [ctx.renderer.domElement.width | 0, ctx.renderer.domElement.height | 0]
-  });
-}
-setTimeout(() => {
-  for (const [id, ctx] of cards.entries()) debugSnapshot('init', ctx);
-// ??? One-shot GPU state probe (manual only, no automatic per-frame read-back) ???
-// Reads a handful of bytes through r186 getArrayBufferAsync(attribute, target,
-// byteOffset, byteCount) - offset and count are BYTES (multiples of 4).
+// Manual one-shot probe stays available for deep dives.
 window.__probeGPU = async (id = activeId) => {
-  const ctx = (exp.id && id === exp.id)
-    ? { renderer: exp.renderer, system: exp.system }
+  const ctx = (exp.id && id === exp.id && exp.ctxLike)
+    ? exp.ctxLike
     : cards.get(id);
-  const dbg = ctx && ctx.system && ctx.system.gpuDebug;
-  if (!dbg) { console.warn('[probe] no gpuDebug for', id); return null; }
-  const maxParticles = dbg.maxParticles;
-  const out = {
-    id,
-    maxParticles,
-    allocatorCount: dbg.allocatorCount,
-    freeCount: null,
-    activeCount: null,
-    lastEmitCount: dbg.lastEmitCount(),
-    emitNodeCount: (dbg.emitNode && dbg.emitNode.count) ?? null,
-    computeNodeCount: Array.isArray(ctx.system.computeNode)
-      ? ctx.system.computeNode.length
-      : (ctx.system.computeNode ? 1 : 0),
-    sampleWindow: null,
-    firstActive: null,
-    activeInSample: 0,
-  };
-  const allocAB = await ctx.renderer.getArrayBufferAsync(dbg.buffers.allocator, null, 0, 4);
-  out.freeCount = new Uint32Array(allocAB)[0];
-  out.activeCount = maxParticles - out.freeCount;
-  // Allocator pops from the high end, so the last 64 slots hold the newest ids.
-  const sampleCount = 64;
-  const firstSlot = maxParticles - sampleCount;
-  const byteOffset = firstSlot * 16;
-  const byteCount = sampleCount * 16;
-  out.sampleWindow = [firstSlot, maxParticles - 1];
-  const read = async (key) => new Float32Array(
-    await ctx.renderer.getArrayBufferAsync(dbg.buffers[key], null, byteOffset, byteCount)
-  );
-  const pos = await read('position');
-  const col = await read('color');
-  const stt = await read('particleState');
-  const orb = await read('orbitalIsActive');
-  for (let s = 0; s < sampleCount; s++) {
-    const o = s * 4;
-    if (col[o + 3] > 0 || orb[o + 3] > 0.5) {
-      out.activeInSample++;
-      if (out.firstActive === null) {
-        out.firstActive = {
-          absoluteSlotIndex: firstSlot + s,
-          position: [pos[o], pos[o + 1], pos[o + 2], pos[o + 3]],
-          color: [col[o], col[o + 1], col[o + 2], col[o + 3]],
-          particleState: [stt[o], stt[o + 1], stt[o + 2], stt[o + 3]],
-          orbitalIsActive: [orb[o], orb[o + 1], orb[o + 2], orb[o + 3]],
-        };
-      }
-    }
-  }
-  console.log('[GPU PROBE]', out);
-  return out;
+  if (!ctx) { console.warn('[probe] no ctx for', id); return null; }
+  return runProbe(ctx, `manual:${ctx.elapsed.toFixed(0)}s`);
 };
+
+setTimeout(() => {
   console.log(`grid cards: ${grid.children.length}`);
 }, 0);
