@@ -13,7 +13,7 @@ import {
   updateParticleSystems,
 } from '@cyberluke/three-particles';
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
-import { examples } from './lib/examples-data.js?v=5';
+import { examples } from './lib/examples-data.js?v=7';
 
 /** Rescue-mode debug switch (drop to false once parity is signed off). */
 const PARTICLE_DEBUG = true;

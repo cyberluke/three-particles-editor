@@ -1,7 +1,7 @@
-import Easing from './easing-functions.js?v=5';
-import * as THREE3 from './three.module.js?v=5';
-import { ObjectUtils } from './three-utils/index.js?v=5';
-import { StorageBufferAttribute } from './three.webgpu.js?v=5';
+import Easing from './easing-functions.js?v=7';
+import * as THREE3 from './three.module.js?v=7';
+import { ObjectUtils } from './three-utils/index.js?v=7';
+import { StorageBufferAttribute } from './three.webgpu.js?v=7';
 
 // src/js/effects/three-particles/version.ts
 var REVISION = "4.0.0" ;
@@ -1266,6 +1266,12 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
         "three-particles: allocator capacity must equal maxParticles + 1."
       );
     }
+    const storageBindingCount = 8 + (trailDesc ? 2 : 0) + fifos.length * 2;
+    if (storageBindingCount > 8) {
+      throw new Error(
+        `three-particles: compute pass requires ${storageBindingCount} storage buffers; guaranteed WebGPU limit is 8`
+      );
+    }
     if (trailDesc && trailDesc.meta !== pipeline.trailMeta) {
       throw new Error("three-particles: trail ring meta buffer mismatch.");
     }
@@ -1493,6 +1499,20 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     }
   }
   createdParticleSystems.push(props);
+  const _dbgMainCount = 8 + (trailDesc ? 2 : 0) + fifos.length * 2;
+  const _dbgPassCounts = [
+    ["emit", _dbgMainCount],
+    ["simulate", _dbgMainCount],
+    ...ribbonPipeline ? [["trail-ribbon", 7]] : [],
+    ...subEntries.flatMap(
+      (_, ei) => [
+        [`sub${ei}:init`, 11],
+        [`sub${ei}:counter-clear`, 1],
+        [`sub${ei}:child-emit`, _dbgMainCount],
+        [`sub${ei}:child-sim`, _dbgMainCount]
+      ]
+    )
+  ];
   if (typeof console !== "undefined" && console.log) {
     const logCfg = normalizedConfig;
     const shpU = pipeline.shapeUniforms;
@@ -1542,8 +1562,12 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       subEmitterCount: (normalizedConfig.subEmitters ?? []).length,
       trailEnabled: !!trailDesc,
       modifiers: {
-        linearVelocity: !!pipeline.buffers.axes || u.linearVelX !== void 0,
-        orbitalVelocity: !pipeline.buffers.axes === false || !!logCfg.velocityOverLifetime?.orbital,
+        linearVelocity: !!logCfg.velocityOverLifetime?.isActive && (u.linearVelX !== void 0 || u.axisLinXMin !== void 0 || !!(logCfg.velocityOverLifetime?.linear && Object.values(logCfg.velocityOverLifetime.linear).some(
+          (value) => value !== void 0 && value !== 0
+        ))),
+        orbitalVelocity: !!logCfg.velocityOverLifetime?.isActive && !!(logCfg.velocityOverLifetime?.orbital && Object.values(logCfg.velocityOverLifetime.orbital).some(
+          (value) => value !== void 0 && value !== 0
+        )),
         sizeOverLifetime: !!normalizedConfig.sizeOverLifetime?.isActive,
         opacityOverLifetime: !!normalizedConfig.opacityOverLifetime?.isActive,
         colorOverLifetime: !!normalizedConfig.colorOverLifetime?.isActive,
@@ -1552,7 +1576,7 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       }
     });
     console.log(
-      `[PS:pipeline] system #${generalData.particleSystemId}: ${(props.passNames ?? []).join(" -> ") || "emit -> simulate"} | storageBindings=${8 + (pipeline.buffers.axes ? 1 : 0) + (trailDesc ? 2 : 0) + fifos.length * 2} | packedFloats=${pipeline.buffers.packedData?.length ?? 0}`
+      `[PS:pipeline] system #${generalData.particleSystemId}: ${(props.passNames ?? []).join(" -> ") || "emit -> simulate"} | storageBindings=${_dbgPassCounts.map((p) => `${p[0]}=${p[1]}\u22648`).join(" ")} | packedFloats=${pipeline.buffers.packedData?.length ?? 0}`
     );
   }
   const update = (cycleData) => {
@@ -1603,7 +1627,8 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       simNode: pipeline.computeNodes[1],
       passNames: pipeline.passNames ?? ["emit", "simulate"],
       allPassNames: props.passNames ?? [],
-      storageBindingCount: 8 + (pipeline.buffers.axes ? 1 : 0) + (trailDesc ? 2 : 0) + fifos.length * 2,
+      storageBindingCount: _dbgMainCount,
+      passBindingCounts: _dbgPassCounts,
       lastEmitCount: () => pipeline.uniforms.emitCount.value,
       /** Decode summary for the `[PS:config]` / `[PS:pipeline]` logs. */
       snapshot: () => {

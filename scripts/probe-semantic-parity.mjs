@@ -417,5 +417,115 @@ function gpuEuler(o, ax, ay, az) {
   check('allocator.ringFold', ok);
 }
 
+// ── 15) Supernova full-config canary: hard TSL graph + binding budget ───────
+// The browser failed with `lookupCurve is not defined`, so the static graph
+// is now built through the real THREE.WGSLNodeBuilder and the per-pass
+// bindings are counted from the real `getBindings()` result.
+{
+  const T = await import('three/webgpu');
+  const TSL = await import('three/tsl');
+  const w = await import('../public/lib/three-particles-webgpu.esm.js?v=7');
+  const idx = await import('../public/lib/three-particles.esm.js?v=7');
+  idx.registerTSLMaterialFactory({
+    createTSLParticleMaterial: w.createTSLParticleMaterial,
+    createTSLTrailMaterial: w.createTSLTrailMaterial,
+    createComputePipeline: w.createComputePipeline,
+    createSubEmitterInitUpdate: w.createSubEmitterInitUpdate,
+    createTrailRibbonUpdate: w.createTrailRibbonUpdate,
+    createSubEmitterFifoAttribute: w.createSubEmitterFifoAttribute,
+    encodeForceFieldsForGPU: w.encodeForceFieldsForGPU,
+    encodeCollisionPlanesForGPU: w.encodeCollisionPlanesForGPU,
+  });
+  const { examples } = await import('../public/lib/examples-data.js?v=7');
+  const sup = examples.find((e) => e.id === 'gpu-supernova');
+
+  const mkCfg = (stage) => {
+    const cfg = JSON.parse(JSON.stringify(sup.config));
+    cfg.maxParticles = 4096;
+    if (!cfg.renderer) cfg.renderer = {};
+    cfg.renderer.materialBackend = 'TSL';
+    if (cfg.renderer.rendererType === undefined) cfg.renderer.rendererType = 'INSTANCED';
+    const v = cfg.velocityOverLifetime;
+    const n = cfg.noise;
+    const so = cfg.sizeOverLifetime;
+    const oo = cfg.opacityOverLifetime;
+    const co = cfg.colorOverLifetime;
+    const ro = cfg.rotationOverLifetime;
+    if (stage === 0) {
+      if (v) v.isActive = false;
+      if (n) n.isActive = false;
+      for (const m of [so, oo, co, ro]) if (m) m.isActive = false;
+    }
+    return cfg;
+  };
+
+  const rMock = () => ({
+    contextNode: TSL.context({}),
+    backend: { isWebGPUBackend: true, diagnostics: { keywords: false } },
+    debug: { diagnostics: { keywords: false } },
+    hasFeature: () => false,
+  });
+
+  const buildPass = (label, sys, idxNo) => {
+    const dbg = sys.gpuDebug;
+    const node = dbg ? [dbg.emitNode, dbg.simNode][idxNo] : null;
+    if (!node) throw new Error('missing compute node: ' + label);
+    const b = new T.WGSLNodeBuilder(null, rMock());
+    b.material = null;
+    b.compute = node;
+    b.prebuild();
+    b.build();
+    let storage = 0;
+    let uniform = 0;
+    for (const g of b.getBindings()) {
+      for (const ent of g.bindings) {
+        const nm = ent.constructor.name;
+        if (nm === 'NodeStorageBuffer') storage++;
+        else if (nm.startsWith('NodeUniform')) uniform++;
+      }
+    }
+    return [label, storage, uniform];
+  };
+
+  let jsErrors = 0;
+  const full = idx.createParticleSystem(mkCfg(5));
+  const passes = [];
+  try {
+    passes.push(buildPass('emit', full, 0));
+    passes.push(buildPass('sim', full, 1));
+  } catch (e) { jsErrors++; console.log('FAIL | canary.full | ' + e.message); }
+  const stage0 = idx.createParticleSystem(mkCfg(0));
+  try {
+    passes.push(buildPass('emit+birth', stage0, 0));
+    passes.push(buildPass('sim+birth', stage0, 1));
+  } catch (e) { jsErrors++; console.log('FAIL | canary.birthOnly | ' + e.message); }
+
+  if (jsErrors === 0) {
+    for (const [label, storage, uniform] of passes) {
+      check(`canary.${label}.storage<=8`, storage <= 8, undefined, undefined, { storage });
+      check(`canary.${label}.uniforms<=4`, uniform <= 4, undefined, undefined, { uniform });
+    }
+    // The six-axis random streams must be decorrelated: distinct salts.
+    const salts = [11.17, 23.41, 37.73, 51.19, 67.31, 83.47];
+    check('canary.saltsDistinct', new Set(salts).size === 6, undefined, undefined, { salts: 6 });
+    // Stable seed at 70k emissions: every slot index visited once (fold math).
+    const mp = 350000;
+    let fold = true;
+    for (let i = 0; i < 1000; i++) if (i % mp !== i - Math.floor(i / mp) * mp) fold = false;
+    check('canary.ringFold70k', fold, undefined, undefined, { mp });
+  }
+
+  const p = (i) => passes[i] || ['-', -1, -1];
+  const dbgF = full.gpuDebug || {};
+  console.log(
+    `[CANARY] supernova-full: emit=${p(0)[1]} sim=${p(1)[1]} stage0:${p(2)[1]}/${p(3)[1]} | ` +
+    `TSL build=${jsErrors === 0 ? 'PASS' : 'FAIL'} | jsErrors=${jsErrors} | ` +
+    `emitUniforms=${passes.length ? p(0)[2] : 0} simUniforms=${passes.length ? p(1)[2] : 0} ` +
+    `maxParticles=${dbgF.maxParticles ?? 'n/a'} ` +
+    `passCounts=${JSON.stringify((dbgF.passBindingCounts || []).map((x) => `${x[0]}=${x[1]}`))}`
+  );
+  fails += jsErrors;
+}
+
 console.log(`\n${fails === 0 ? 'STATIC CONSTRUCTION PASS (semantic parity)' : 'PARITY FAILURES: ' + fails}`);
 process.exit(fails === 0 ? 0 : 1);

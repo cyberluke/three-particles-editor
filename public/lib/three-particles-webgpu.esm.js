@@ -1,8 +1,8 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, uniform, storage, uint, atomicStore, compute, atomicLoad, instanceIndex, sqrt, atomicAdd, mix, buffer, rand, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, Loop, Continue } from './three.tsl.js?v=5';
-import * as THREE from './three.module.js?v=5';
-import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=5';
-import { StorageBufferAttribute as StorageBufferAttribute$1, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=5';
+import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, uniform, storage, uint, atomicStore, compute, atomicLoad, instanceIndex, sqrt, atomicAdd, mix, rand, buffer, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, Loop, Continue } from './three.tsl.js?v=7';
+import * as THREE from './three.module.js?v=7';
+import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=7';
+import { StorageBufferAttribute as StorageBufferAttribute$1, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=7';
 
 // src/webgpu.ts
 var PLANE_STRIDE = 12;
@@ -582,7 +582,7 @@ var createSubEmitterFifoAttribute = (capacity) => ({
   capacity: Math.max(1, capacity),
   windowSize: subEmitterWindowSize(capacity)
 });
-function createModifierStorageBuffers(maxParticles, instanced, curveData, hasForceFields = false, hasCollisionPlanes = false, hasVelocityAxes = false, trailLength = 0) {
+function createModifierStorageBuffers(maxParticles, instanced, curveData, hasForceFields = false, hasCollisionPlanes = false, trailLength = 0) {
   const Cls = instanced ? StorageInstancedBufferAttribute : StorageBufferAttribute$1;
   const curveLen = Math.max(curveData.length, 1);
   const ffSize = hasForceFields ? FORCE_FIELD_DATA_SIZE : 0;
@@ -607,7 +607,6 @@ function createModifierStorageBuffers(maxParticles, instanced, curveData, hasFor
       startColorsExt: new StorageBufferAttribute$1(new Float32Array(maxParticles * 4), 4),
       orbitalIsActive: new StorageBufferAttribute$1(new Float32Array(maxParticles * 4), 4),
       allocator: new StorageBufferAttribute$1(allocatorData, 1),
-      axes: hasVelocityAxes ? new StorageBufferAttribute$1(new Float32Array(maxParticles * 4), 4) : null,
       trailMeta,
       packedData
     },
@@ -805,9 +804,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const allocatorCount = maxParticles + 1;
   const ringMod = float(maxParticles);
   const sAllocator = storage(buffers.allocator, "uint", Math.max(1, allocatorCount)).toAtomic();
-  const hasAxes = buffers.axes !== null;
-  const sAxes = hasAxes ? storage(buffers.axes, "vec4", maxParticles) : null;
   const sCD = buffer(buffers.packedData, "float", buffers.packedData.length);
+  const lookupCurve = createCurveLookup(sCD);
   const uFifoBase = uniform(float(0), "uint");
   const fifoNodes = subFifos.map((f) => ({
     trigger: f.trigger,
@@ -879,15 +877,23 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       axisUniforms.set(a, [uniform(float(a.min)), uniform(float(a.max))]);
     }
   }
-  const sampleAxis = (a, r) => {
+  const simAxis = (a, lifePct, particleSeed, salt) => {
+    if (a.ci >= 0) {
+      return lookupCurve({
+        curveIndex: float(a.ci),
+        t: lifePct
+      });
+    }
     if (a.isRange) {
       const [mn, mx] = axisUniforms.get(a);
-      return mix(mn, mx, r);
+      return mix(
+        mn,
+        mx,
+        rand(particleSeed.add(float(salt)))
+      );
     }
     return float(a.min);
   };
-  const simAxis = (a, stored, lifePct) => a.ci >= 0 ? lookupCurve({ curveIndex: float(a.ci), t: lifePct }) : stored;
-  const noiseOffsetScale = float(shapeParams.noiseUseRandomOffset ? 100 : 0);
   const emitKernel = Fn(() => {
     const i = instanceIndex;
     If(i.lessThan(uEmitCount), () => {
@@ -895,7 +901,6 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       const slotIdx = birthNo.sub(floor(birthNo.div(ringMod)).mul(ringMod)).toVar();
       const base2 = float(i).mul(float(16));
       const rnd = (k) => rand(uSeed.add(base2.add(float(k + 0.13))));
-      const rNoise = rnd(0);
       const rA = rnd(1);
       const rB = rnd(2);
       const rC = rnd(3);
@@ -954,38 +959,18 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       const srot = mix(uRotMin, uRotMax, rRot);
       const startFrame = floor(mix(uFrMin, uFrMax, rSheet)).toVar();
       const rotSpeed = mix(uRotOLMin, uRotOLMax, rRotSpeed);
-      const noiseOff = rNoise.mul(noiseOffsetScale);
-      sPos.element(slotIdx).assign(
-        vec4(
-          ox,
-          oy,
-          oz,
-          flags.orbitalVelocity ? sampleAxis(orbAxes[1], rC) : float(0)
+      const particleSeed = rand(
+        uSeed.add(
+          float(i).mul(float(16)).add(float(15.73))
         )
       );
-      sVel.element(slotIdx).assign(
-        vec4(
-          rotVX,
-          rotVY,
-          rotVZ,
-          flags.orbitalVelocity ? sampleAxis(orbAxes[2], rA) : float(0)
-        )
-      );
+      sPos.element(slotIdx).assign(vec4(ox, oy, oz, float(0)));
+      sVel.element(slotIdx).assign(vec4(rotVX, rotVY, rotVZ, float(0)));
       sCol.element(slotIdx).assign(vec4(clR, clG, clB, opac));
       sPS.element(slotIdx).assign(vec4(float(0), ssize, srot, startFrame));
       sSV.element(slotIdx).assign(vec4(slife, ssize, opac, clR));
-      sEx.element(slotIdx).assign(vec4(clG, clB, rotSpeed, noiseOff));
+      sEx.element(slotIdx).assign(vec4(clG, clB, rotSpeed, particleSeed));
       sOIA.element(slotIdx).assign(vec4(rotPX, rotPY, rotPZ, float(1)));
-      if (hasAxes && sAxes) {
-        sAxes.element(slotIdx).assign(
-          vec4(
-            sampleAxis(linAxes[0], rA),
-            sampleAxis(linAxes[1], rB),
-            sampleAxis(linAxes[2], rC),
-            flags.orbitalVelocity ? sampleAxis(orbAxes[0], rB) : float(0)
-          )
-        );
-      }
       for (const f of fifoNodes) {
         if (f.trigger === 0) {
           writeFifoEvent(f, ox, oy, oz, rotVX, rotVY, rotVZ);
@@ -1006,9 +991,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       const oiaVec = sOIA.element(i).toVar();
       If(oiaVec.w.greaterThanEqual(float(0.5)), () => {
         const pos = sPos.element(i).xyz.toVar();
-        const posW = sPos.element(i).w.toVar();
         const vel = sVel.element(i).xyz.toVar();
-        const velW = sVel.element(i).w.toVar();
         const ps = sPS.element(i).toVar();
         const sv = sSV.element(i);
         const ex = sEx.element(i);
@@ -1028,20 +1011,18 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           particleIdx: i,
           sOrbitalIsActiveNode: sOIA
         });
-        if (flags.linearVelocity && hasAxes && sAxes) {
-          const ax = sAxes.element(i);
-          const lvx = simAxis(linAxes[0], ax.x, lifePct);
-          const lvy = simAxis(linAxes[1], ax.y, lifePct);
-          const lvz = simAxis(linAxes[2], ax.z, lifePct);
+        if (flags.linearVelocity) {
+          const lvx = simAxis(linAxes[0], lifePct, ex.w, 11.17);
+          const lvy = simAxis(linAxes[1], lifePct, ex.w, 23.41);
+          const lvz = simAxis(linAxes[2], lifePct, ex.w, 37.73);
           pos.assign(pos.add(vec3(lvx, lvy, lvz).mul(uDelta)));
         }
-        if (flags.orbitalVelocity && hasAxes && sAxes) {
+        if (flags.orbitalVelocity) {
           const offset = vec3(oiaVec.x, oiaVec.y, oiaVec.z).toVar();
           pos.assign(pos.sub(offset));
-          const ax = sAxes.element(i);
-          const oX = hasAxes ? simAxis(orbAxes[0], ax.w, lifePct) : float(0);
-          const oY = hasAxes ? simAxis(orbAxes[1], posW, lifePct) : float(0);
-          const oZ = hasAxes ? simAxis(orbAxes[2], velW, lifePct) : float(0);
+          const oX = simAxis(orbAxes[0], lifePct, ex.w, 51.19);
+          const oY = simAxis(orbAxes[1], lifePct, ex.w, 67.31);
+          const oZ = simAxis(orbAxes[2], lifePct, ex.w, 83.47);
           const angX = oX.mul(uDelta);
           const angY = oZ.mul(uDelta);
           const angZ = oY.mul(uDelta);
@@ -1088,7 +1069,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           ps.z.assign(ps.z.add(ex.z.mul(uDelta).mul(float(0.02))));
         }
         if (flags.noise) {
-          const np = lifePct.add(ex.w).mul(float(10)).mul(uNoiseStrength).mul(uNoiseFrequency);
+          const noiseOffset = shapeParams.noiseUseRandomOffset ? rand(ex.w.add(float(97.13))).mul(float(100)) : float(0);
+          const np = lifePct.add(noiseOffset).mul(float(10)).mul(uNoiseStrength).mul(uNoiseFrequency);
           let noiseX = float(0).toVar();
           let noiseY = float(0).toVar();
           let noiseZ = float(0).toVar();
@@ -1151,8 +1133,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
             );
           });
         }
-        sPos.element(i).assign(vec4(pos, posW));
-        sVel.element(i).assign(vec4(vel, velW));
+        sPos.element(i).assign(vec4(pos, float(0)));
+        sVel.element(i).assign(vec4(vel, float(0)));
         sPS.element(i).assign(ps);
         sOIA.element(i).assign(oiaVec);
         If(ps.x.greaterThan(startLife), () => {
@@ -1272,10 +1254,6 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     Math.max(1, childMax + 1)
   ).toAtomic();
   const cRingMod = float(childMax);
-  const cHasAxes = child.axes !== null;
-  const cAxes = cHasAxes ? storage(child.axes, "vec4", childMax) : null;
-  const cOrbOn = childVelValues && (childVelValues.orbital[0] !== void 0 || childVelValues.orbital[1] !== void 0 || childVelValues.orbital[2] !== void 0);
-  childVelValues && (childVelValues.linear[0] !== void 0 || childVelValues.linear[1] !== void 0 || childVelValues.linear[2] !== void 0);
   storage(parent.position, "vec4", parentMax);
   storage(parent.velocity, "vec4", parentMax);
   const fifoCounter = storage(
@@ -1287,9 +1265,6 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     fifo.payload,
     "float",
     Math.max(1, fifo.payload.array.length)
-  );
-  const cNoiseOffsetScale = float(
-    childParams.noiseUseRandomOffset ? 100 : 0
   );
   const cParseAxis = (rawAxis, ci) => {
     if (rawAxis && typeof rawAxis === "object" && "min" in rawAxis) {
@@ -1304,9 +1279,8 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     linear: [void 0, void 0, void 0],
     orbital: [void 0, void 0, void 0]
   };
-  const cLin = [0, 1, 2].map((k) => cParseAxis(cVv.linear[k]));
-  const cOrb = [0, 1, 2].map((k) => cParseAxis(cVv.orbital[k]));
-  const cSample = (a, r) => a.isRange ? mix(float(a.min), float(a.max), r) : float(a.min);
+  [0, 1, 2].map((k) => cParseAxis(cVv.linear[k]));
+  [0, 1, 2].map((k) => cParseAxis(cVv.orbital[k]));
   const otherIdx = uFifoBase.equal(float(0)).select(uint(1), uint(0));
   const counterClearKernel = Fn(() => {
     atomicStore(fifoCounter.element(otherIdx), uint(0));
@@ -1334,7 +1308,7 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
         {
           const rBase = float(i).mul(float(16 * perEvent)).add(float(jj * 16));
           const rnd = (k) => rand(uSeed.add(rBase.add(float(k + 0.13))));
-          const rNoise = rnd(0);
+          rnd(0);
           const rA = rnd(1);
           const rB = rnd(2);
           const rC = rnd(3);
@@ -1401,41 +1375,20 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
             float(childParams.rotOverLifeMax),
             rRotSpeed
           );
-          cPos.element(slot).assign(
-            vec4(
-              px,
-              py,
-              pz,
-              cOrbOn ? cSample(cOrb[1], rC) : float(0)
-            )
+          const particleSeed = rand(
+            uSeed.add(rBase.add(float(15.73)))
           );
-          cVel.element(slot).assign(
-            vec4(
-              rvx,
-              rvy,
-              rvz,
-              cOrbOn ? cSample(cOrb[2], rA) : float(0)
-            )
-          );
+          cPos.element(slot).assign(vec4(px, py, pz, float(0)));
+          cVel.element(slot).assign(vec4(rvx, rvy, rvz, float(0)));
           cCol.element(slot).assign(vec4(clR, clG, clB, opac));
           cPS.element(slot).assign(
             vec4(float(0), ssize, srot, startFrame)
           );
           cSV.element(slot).assign(vec4(slife, ssize, opac, clR));
           cEx.element(slot).assign(
-            vec4(clG, clB, rotSpeed, rNoise.mul(cNoiseOffsetScale))
+            vec4(clG, clB, rotSpeed, particleSeed)
           );
           cOIA.element(slot).assign(vec4(rx, ry, rz, float(1)));
-          if (cHasAxes && cAxes) {
-            cAxes.element(slot).assign(
-              vec4(
-                cSample(cLin[0], rA),
-                cSample(cLin[1], rB),
-                cSample(cLin[2], rC),
-                cOrbOn ? cSample(cOrb[0], rB) : float(0)
-              )
-            );
-          }
         }
       }
     });
@@ -1489,7 +1442,7 @@ function createTrailRibbonUpdate(desc) {
   ).toAtomic();
   const pColor = storage(desc.particleColor, "vec4", desc.maxParticles);
   const sCD = buffer(curveData, "float", curveData.length);
-  const lookupCurve2 = createCurveLookup(sCD);
+  const lookupCurve = createCurveLookup(sCD);
   const halfWidthBase = float(desc.width * 0.5);
   const kernel = Fn(() => {
     const idx = instanceIndex;
@@ -1513,17 +1466,17 @@ function createTrailRibbonUpdate(desc) {
         const ni = nextRaw.sub(floor(nextRaw.div(lf)).mul(lf));
         const nextSample = hist.element(base.add(ni)).toVar();
         const t = count.greaterThan(float(1.5)).select(s.div(max(count.sub(float(1)), float(1))), float(0));
-        const wScale = lookupCurve2({
+        const wScale = lookupCurve({
           curveIndex: float(IDX_WIDTH),
           t
         });
-        const oScale = lookupCurve2({
+        const oScale = lookupCurve({
           curveIndex: float(IDX_OPACITY),
           t
         });
-        const cr = lookupCurve2({ curveIndex: float(IDX_CR), t });
-        const cg = lookupCurve2({ curveIndex: float(IDX_CG), t });
-        const cb = lookupCurve2({ curveIndex: float(IDX_CB), t });
+        const cr = lookupCurve({ curveIndex: float(IDX_CR), t });
+        const cg = lookupCurve({ curveIndex: float(IDX_CG), t });
+        const cb = lookupCurve({ curveIndex: float(IDX_CB), t });
         const pcol = pColor.element(i).toVar();
         const inRange = s.lessThan(count);
         const ageOk = desc.maxTime > 0 ? uNowMs.sub(sample.w).lessOrEqual(float(desc.maxTime)) : inRange;
@@ -2273,7 +2226,6 @@ function createComputePipeline(maxParticles, instanced, normalizedConfig, partic
       v.orbital.z
     ]
   };
-  const hasVelocityAxes = flags.linearVelocity || flags.orbitalVelocity;
   if (trailDesc && !trailDesc.meta) {
     trailDesc.meta = new StorageBufferAttribute(
       new Uint32Array(Math.max(1, maxParticles) * 2),
@@ -2286,7 +2238,6 @@ function createComputePipeline(maxParticles, instanced, normalizedConfig, partic
     bakedCurves.data,
     flags.forceFields,
     flags.collisionPlanes,
-    hasVelocityAxes,
     trailDesc ? trailDesc.length : 0
   );
   if (trailDesc && built.buffers.trailMeta) {
