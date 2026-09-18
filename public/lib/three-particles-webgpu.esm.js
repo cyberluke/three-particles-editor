@@ -1,8 +1,8 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, uniform, normalize, cameraPosition, cameraViewMatrix, mix, storage, buffer, instanceIndex, atomicSub, uint, atomicLoad, rand, sqrt, compute, atomicAdd, atomicStore, Loop, Continue, fract } from './three.tsl.js?v=5';
+import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, uniform, storage, atomicLoad, instanceIndex, sqrt, atomicSub, uint, mix, atomicStore, compute, buffer, rand, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, atomicAdd, Loop, Continue } from './three.tsl.js?v=5';
 import * as THREE from './three.module.js?v=5';
-import { DoubleSide, Vector3, DataTexture } from './three.module.js?v=5';
-import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js?v=5';
+import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=5';
+import { StorageBufferAttribute, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=5';
 
 // src/webgpu.ts
 var PLANE_STRIDE = 12;
@@ -163,6 +163,16 @@ var getCurveFunctionFromConfig = (particleSystemId, lifetimeCurve) => {
   if (lifetimeCurve.type === "EASING" /* EASING */) {
     return lifetimeCurve.curveFunction;
   }
+  const raw = lifetimeCurve;
+  if (Array.isArray(raw.bezierPoints)) {
+    return createBezierCurveFunction(
+      particleSystemId,
+      raw.bezierPoints
+    );
+  }
+  if (typeof raw.curveFunction === "function") {
+    return raw.curveFunction;
+  }
   throw new Error(`Unsupported value type: ${lifetimeCurve}`);
 };
 var calculateValue = (particleSystemId, value, time = 0) => {
@@ -290,6 +300,15 @@ function createForceFieldTSL(sCurveData, forceFieldOffset, forceFieldCount) {
 
 // src/js/effects/three-particles/webgpu/curve-bake.ts
 var CURVE_RESOLUTION = 256;
+function bakeCurve(curveFn, resolution = CURVE_RESOLUTION) {
+  const samples = new Float32Array(resolution);
+  const lastIndex = resolution - 1;
+  for (let i = 0; i < resolution; i++) {
+    const t = lastIndex === 0 ? 0 : i / lastIndex;
+    samples[i] = curveFn(t);
+  }
+  return samples;
+}
 function bakeCurveIntoBuffer(buffer2, writeOffset, particleSystemId, curve) {
   const curveFn = getCurveFunctionFromConfig(particleSystemId, curve);
   const lastIndex = CURVE_RESOLUTION - 1;
@@ -552,6 +571,14 @@ Fn(
 var sRGBToLinear = (c) => c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 
 // src/js/effects/three-particles/webgpu/compute-modifiers.ts
+var SUB_EMITTER_EVENT_STRIDE = 6;
+var subEmitterWindowSize = (capacity) => 1 + SUB_EMITTER_EVENT_STRIDE * Math.max(1, capacity);
+var createSubEmitterFifoAttribute = (capacity) => new StorageBufferAttribute(
+  new Float32Array(
+    2 * (1 + SUB_EMITTER_EVENT_STRIDE * Math.max(1, capacity))
+  ),
+  1
+);
 function createModifierStorageBuffers(maxParticles, instanced, curveData, hasForceFields = false, hasCollisionPlanes = false) {
   const Cls = instanced ? StorageInstancedBufferAttribute : StorageBufferAttribute;
   const curveLen = Math.max(curveData.length, 1);
@@ -590,9 +617,123 @@ function createCurveLookup(sCurveData) {
     return mix(v0, v1, f);
   });
 }
-function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, shapeParams, forceFieldCount = 0, collisionPlaneCount = 0) {
+function shapeEmitNodes(u, rA, rB, rC, rSpeed) {
+  const DEG = float(0.01745329);
+  const uRadius = u.radius;
+  const uRadiusThickness = u.thickness;
+  const thetaS = rA.mul(u.arcDeg).mul(DEG);
+  const cosPhi = rB.mul(float(2)).sub(float(1));
+  const sinPhi = sqrt(float(1).sub(cosPhi.mul(cosPhi)));
+  const dirSx = sinPhi.mul(cos(thetaS));
+  const dirSy = sinPhi.mul(sin(thetaS));
+  const dirSz = cosPhi;
+  const distS = uRadius.mul(float(1).sub(uRadiusThickness)).add(uRadius.mul(uRadiusThickness).mul(rC));
+  const pSx = dirSx.mul(distS);
+  const pSy = dirSy.mul(distS);
+  const pSz = dirSz.mul(distS);
+  const spS = mix(u.speedMin, u.speedMax, rSpeed);
+  const vSx = dirSx.mul(spS);
+  const vSy = dirSy.mul(spS);
+  const vSz = dirSz.mul(spS);
+  const thetaB = rA.mul(u.arcDeg).mul(DEG);
+  const dirBx = cos(thetaB);
+  const dirBy = sin(thetaB);
+  const distB = uRadius.mul(float(1).sub(uRadiusThickness)).add(uRadius.mul(uRadiusThickness).mul(rB));
+  const pBx = dirBx.mul(distB);
+  const pBy = dirBy.mul(distB);
+  const pBz = float(0);
+  const nAngle = distB.div(uRadius.max(float(1e-6))).mul(u.coneAngleDeg.mul(DEG));
+  const spB = mix(u.speedMin, u.speedMax, rSpeed);
+  const sinNA = sin(nAngle);
+  const vCx = dirBx.mul(sinNA).mul(spB);
+  const vCy = dirBy.mul(sinNA).mul(spB);
+  const vCz = cos(nAngle).mul(spB);
+  const vIx = dirBx.mul(spB);
+  const vIy = dirBy.mul(spB);
+  const vIz = float(0);
+  const rxOff = rA.mul(u.rectSX).sub(u.rectSX.mul(float(0.5)));
+  const ryOff = rB.mul(u.rectSY).sub(u.rectSY.mul(float(0.5)));
+  const rotXr = u.rectRX.mul(DEG);
+  const rotYr = u.rectRY.mul(DEG);
+  const pRx = rxOff.mul(cos(rotYr));
+  const pRy = ryOff.mul(cos(rotXr));
+  const pRz = rxOff.mul(sin(rotYr)).sub(ryOff.mul(sin(rotXr)));
+  const halfX = u.boxSX.mul(float(0.5));
+  const halfY = u.boxSY.mul(float(0.5));
+  const halfZ = u.boxSZ.mul(float(0.5));
+  const pVx = rA.mul(u.boxSX).sub(halfX);
+  const pVy = rB.mul(u.boxSY).sub(halfY);
+  const pVz = rC.mul(u.boxSZ).sub(halfZ);
+  const side = floor(rA.mul(float(6))).min(float(5));
+  const pa = side.sub(floor(side.div(float(3))).mul(float(3)));
+  const a0 = side.greaterThan(float(2)).select(float(1), float(0));
+  const isPa0 = pa.equal(float(0));
+  const isPa1 = pa.equal(float(1));
+  const shX = isPa0.select(a0, isPa1.select(rC, rB));
+  const shY = isPa0.select(rB, isPa1.select(a0, rC));
+  const shZ = isPa0.select(rC, isPa1.select(rB, a0));
+  const pShx = shX.mul(u.boxSX).sub(halfX);
+  const pShy = shY.mul(u.boxSY).sub(halfY);
+  const pShz = shZ.mul(u.boxSZ).sub(halfZ);
+  const edge = floor(rB.mul(float(4))).min(float(3));
+  const lowEdge = edge.lessThan(float(2));
+  const e1 = lowEdge.select(rC, edge.sub(float(2)));
+  const e2 = lowEdge.select(edge, rC);
+  const edX = isPa0.select(a0, isPa1.select(e2, e1));
+  const edY = isPa0.select(e1, isPa1.select(a0, e2));
+  const edZ = isPa0.select(e2, isPa1.select(e1, a0));
+  const pEdx = edX.mul(u.boxSX).sub(halfX);
+  const pEdy = edY.mul(u.boxSY).sub(halfY);
+  const pEdz = edZ.mul(u.boxSZ).sub(halfZ);
+  const boxFrom = u.boxFrom;
+  const pBX = boxFrom.equal(float(0)).select(pVx, boxFrom.equal(float(1)).select(pShx, pEdx));
+  const pBY = boxFrom.equal(float(0)).select(pVy, boxFrom.equal(float(1)).select(pShy, pEdy));
+  const pBZ = boxFrom.equal(float(0)).select(pVz, boxFrom.equal(float(1)).select(pShz, pEdz));
+  const vPlaneZ = mix(u.speedMin, u.speedMax, rSpeed);
+  const kind = u.kind;
+  const isSphereKind = kind.equal(float(0));
+  const isConeKind = kind.equal(float(1));
+  const isCircleKind = kind.equal(float(2));
+  const isRectKind = kind.equal(float(3));
+  const planeX = isRectKind.select(pRx, pBX);
+  const planeY = isRectKind.select(pRy, pBY);
+  const planeZ = isRectKind.select(pRz, pBZ);
+  const discX = isConeKind.select(pBx, planeX);
+  const discY = isConeKind.select(pBy, planeY);
+  const discZ = isConeKind.select(pBz, planeZ);
+  const px = isSphereKind.select(pSx, discX);
+  const py = isSphereKind.select(pSy, discY);
+  const pz = isSphereKind.select(pSz, discZ);
+  const cOrI_X = isConeKind.select(vCx, vIx);
+  const cOrI_Y = isConeKind.select(vCy, vIy);
+  const cOrI_Z = isConeKind.select(vCz, vIz);
+  const isDisc = isConeKind.or(isCircleKind);
+  const nonSphereVX = isDisc.select(cOrI_X, float(0));
+  const nonSphereVY = isDisc.select(cOrI_Y, float(0));
+  const nonSphereVZ = isDisc.select(cOrI_Z, vPlaneZ);
+  const vx = isSphereKind.select(vSx, nonSphereVX);
+  const vy = isSphereKind.select(vSy, nonSphereVY);
+  const vz = isSphereKind.select(vSz, nonSphereVZ);
+  return { px, py, pz, vx, vy, vz };
+}
+function quatRotateNodes(x, y, z, q) {
+  const qx = q.x;
+  const qy = q.y;
+  const qz = q.z;
+  const qw = q.w;
+  const projD = qx.mul(x).add(qy.mul(y)).add(qz.mul(z)).mul(float(2));
+  const scaleV = qw.mul(qw).mul(float(2)).sub(float(1));
+  const twoW = qw.mul(float(2));
+  return [
+    x.mul(scaleV).add(qx.mul(projD)).add(qy.mul(z).sub(qz.mul(y)).mul(twoW)),
+    y.mul(scaleV).add(qy.mul(projD)).add(qz.mul(x).sub(qx.mul(z)).mul(twoW)),
+    z.mul(scaleV).add(qz.mul(projD)).add(qx.mul(y).sub(qy.mul(x)).mul(twoW))
+  ];
+}
+function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, shapeParams, forceFieldCount = 0, collisionPlaneCount = 0, subFifos = [], trailDesc) {
   const uDelta = uniform(float(0));
   const uDeltaMs = uniform(float(0));
+  const uNowMs = uniform(float(0));
   const uGravityVelocity = uniform(new Vector3(0, 0, 0));
   const uSeed = uniform(float(0));
   const uEmitCount = uniform(0, "uint");
@@ -610,11 +751,20 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   };
   const uShape = sh("shapeKind", shapeParams.shapeKind);
   const uRadius = sh("radius", shapeParams.radius);
-  const uLength = sh("length", shapeParams.length);
-  const uArc = sh("arc", shapeParams.arc);
-  const uSpreadX = sh("spreadX", shapeParams.spreadX);
-  const uSpreadY = sh("spreadY", shapeParams.spreadY);
-  const uSpreadZ = sh("spreadZ", shapeParams.spreadZ);
+  const uRadiusThickness = sh("radiusThickness", shapeParams.radiusThickness);
+  const uArcDeg = sh("arcDeg", shapeParams.arcDeg);
+  const uConeAngleDeg = sh("coneAngleDeg", shapeParams.coneAngleDeg);
+  const uRectRX = sh("rectangleRotXDeg", shapeParams.rectangleRotXDeg);
+  const uRectRY = sh("rectangleRotYDeg", shapeParams.rectangleRotYDeg);
+  const uRectSX = sh("rectangleScaleX", shapeParams.rectangleScaleX);
+  const uRectSY = sh("rectangleScaleY", shapeParams.rectangleScaleY);
+  const uBoxSX = sh("boxScaleX", shapeParams.boxScaleX);
+  const uBoxSY = sh("boxScaleY", shapeParams.boxScaleY);
+  const uBoxSZ = sh("boxScaleZ", shapeParams.boxScaleZ);
+  const uBoxEmitFrom = sh("boxEmitFrom", shapeParams.boxEmitFrom);
+  const uEmitterPos = uniform(new Vector4(0, 0, 0, 0));
+  const uWrapperQuat = uniform(new Vector4(0, 0, 0, 1));
+  const uWorldScale = uniform(new Vector3(1, 1, 1));
   const uSpeedMin = sh("speedMin", shapeParams.speedMin);
   const uSpeedMax = sh("speedMax", shapeParams.speedMax);
   const uSizeMin = sh("sizeMin", shapeParams.sizeMin);
@@ -643,6 +793,31 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const allocatorCount = maxParticles + 1;
   const sAllocator = storage(buffers.allocator, "uint", allocatorCount).toAtomic();
   const sCD = buffer(buffers.packedData, "float", buffers.packedData.length);
+  const uFifoBase = uniform(float(0));
+  const fifoNodes = subFifos.map((f) => ({
+    trigger: f.trigger,
+    capacity: Math.max(1, f.capacity),
+    node: storage(
+      f.attribute,
+      "float",
+      f.attribute.array.length
+    ).toAtomic()
+  }));
+  const writeFifoEvent = (n, capacity, x, y, z, vx, vy, vz) => {
+    const base = uFifoBase.toVar();
+    const oldCount = atomicAdd(n.element(base), float(1)).toVar();
+    If(oldCount.lessThan(float(capacity)), () => {
+      const b = base.add(float(1)).add(oldCount.mul(float(SUB_EMITTER_EVENT_STRIDE)));
+      n.element(b).assign(x);
+      n.element(b.add(float(1))).assign(y);
+      n.element(b.add(float(2))).assign(z);
+      n.element(b.add(float(3))).assign(vx);
+      n.element(b.add(float(4))).assign(vy);
+      n.element(b.add(float(5))).assign(vz);
+    });
+  };
+  const trailRows = trailDesc ? trailDesc.length + 1 : 0;
+  const sTrail = trailDesc ? storage(trailDesc.attribute, "vec4", trailRows * maxParticles).toAtomic() : null;
   const curveLen = Math.max(curveMap.data.length, 1);
   const forceFieldOffset = curveLen;
   const collisionOffset = forceFieldOffset + (flags.forceFields ? FORCE_FIELD_DATA_SIZE : 0);
@@ -655,61 +830,81 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       const oldTop = atomicSub(sAllocator.element(0), uint(1)).toVar();
       If(oldTop.greaterThan(uint(0)), () => {
         const slotIdx = atomicLoad(sAllocator.element(oldTop)).toVar();
-        const base2 = i.mul(float(8));
-        const r0 = rand(uSeed.add(base2.add(float(0.13))));
-        const r1 = rand(uSeed.add(base2.add(float(1.17))));
-        const r2 = rand(uSeed.add(base2.add(float(2.23))));
-        const r3 = rand(uSeed.add(base2.add(float(3.31))));
-        const r4 = rand(uSeed.add(base2.add(float(4.37))));
-        const r5 = rand(uSeed.add(base2.add(float(5.41))));
-        const r6 = rand(uSeed.add(base2.add(float(6.47))));
-        const r7 = rand(uSeed.add(base2.add(float(7.53))));
-        const phi = r0.mul(float(6.2831853)).toVar();
-        const cosT = float(1).sub(r1.mul(float(2))).toVar();
-        const sinT = sqrt(float(1).sub(cosT.mul(cosT))).toVar();
-        const dx = sinT.mul(cos(phi));
-        const dy = cosT;
-        const dz = sinT.mul(sin(phi));
-        const kind = uShape;
-        const coneZ = float(1).sub(r1.mul(uArc).mul(float(0.3183098)));
-        const planeZ = float(1);
-        const dirX = select01(kind, dx, dx, float(0));
-        const dirY = select01(kind, dy, dy, float(0));
-        const dirZa = select01(kind, dz, dz, planeZ);
-        const coneX = dirX.mul(float(1));
-        const coneY = dirY.mul(float(1));
-        const coneZ2 = select01(kind, coneZ, dirZa, planeZ);
-        const dvx = select01(kind, coneX, dirX, coneX);
-        const dvy = select01(kind, coneY, dirY, coneY);
-        const dvz = select01(kind, coneZ2, coneZ2, planeZ);
-        const sdX = mix(dvx, float(0), uSpreadX);
-        const sdY = mix(dvy, float(1), uSpreadY);
-        const sdZ = mix(dvz, float(0), uSpreadZ);
-        const radial = r2.mul(uRadius);
-        const ox = sdX.mul(radial);
-        const oy = sdY.mul(radial);
-        const oz = sdZ.mul(radial);
-        const lenOffset = r3.sub(float(0.5)).mul(uLength);
-        sPos.element(slotIdx).assign(vec4(ox, oy.add(lenOffset), oz, float(0)));
-        const spMag = mix(uSpeedMin, uSpeedMax, r4).toVar();
-        const vxAbs = sdX.mul(spMag);
-        const vyAbs = sdY.mul(spMag);
-        const vzAbs = sdZ.mul(spMag);
-        sVel.element(slotIdx).assign(vec4(vxAbs, vyAbs, vzAbs, float(0)));
-        const clR = mix(uCRR, uCRX, r6);
-        const clG = mix(uCGR, uCGX, r6);
-        const clB = mix(uCBR, uCBX, r6);
-        const opac = mix(uOpMin, uOpMax, r7);
-        const slife = mix(uLifeMin, uLifeMax, r5).mul(float(1e3));
-        const ssize = mix(uSizeMin, uSizeMax, r4);
-        const srot = mix(uRotMin, uRotMax, r3);
+        const base2 = i.mul(float(16));
+        const rnd = (k) => rand(uSeed.add(base2.add(float(k + 0.13))));
+        const rNoise = rnd(0);
+        const rA = rnd(1);
+        const rB = rnd(2);
+        const rC = rnd(3);
+        const rSheet = rnd(5);
+        const rSpeed = rnd(6);
+        const rSize = rnd(7);
+        const rRot = rnd(8);
+        const rOp = rnd(9);
+        const rLife = rnd(10);
+        const rColor = rnd(11);
+        const rRotSpeed = rnd(12);
+        const shE = shapeEmitNodes(
+          {
+            kind: uShape,
+            radius: uRadius,
+            thickness: uRadiusThickness,
+            arcDeg: uArcDeg,
+            coneAngleDeg: uConeAngleDeg,
+            rectRX: uRectRX,
+            rectRY: uRectRY,
+            rectSX: uRectSX,
+            rectSY: uRectSY,
+            boxSX: uBoxSX,
+            boxSY: uBoxSY,
+            boxSZ: uBoxSZ,
+            boxFrom: uBoxEmitFrom,
+            speedMin: uSpeedMin,
+            speedMax: uSpeedMax
+          },
+          rA,
+          rB,
+          rC,
+          rSpeed
+        );
+        const pxL = shE.px;
+        const pyL = shE.py;
+        const pzL = shE.pz;
+        const vxL = shE.vx;
+        const vyL = shE.vy;
+        const vzL = shE.vz;
+        const [rotPX, rotPY, rotPZ] = quatRotateNodes(pxL, pyL, pzL, uWrapperQuat);
+        const [rotVX, rotVY, rotVZ] = quatRotateNodes(vxL, vyL, vzL, uWrapperQuat);
+        const isWorld = uEmitterPos.w.greaterThan(0.5);
+        const sxf = isWorld.select(uWorldScale.x, float(1));
+        const syf = isWorld.select(uWorldScale.y, float(1));
+        const szf = isWorld.select(uWorldScale.z, float(1));
+        const ox = rotPX.mul(sxf).add(uEmitterPos.x);
+        const oy = rotPY.mul(syf).add(uEmitterPos.y);
+        const oz = rotPZ.mul(szf).add(uEmitterPos.z);
+        const opac = mix(uOpMin, uOpMax, rOp);
+        const clR = mix(uCRR, uCRX, rColor);
+        const clG = mix(uCGR, uCGX, rColor);
+        const clB = mix(uCBR, uCBX, rColor);
+        const slife = mix(uLifeMin, uLifeMax, rLife).mul(float(1e3));
+        const ssize = mix(uSizeMin, uSizeMax, rSize);
+        const srot = mix(uRotMin, uRotMax, rRot);
+        const startFrame = floor(mix(uFrMin, uFrMax, rSheet)).toVar();
+        const rotSpeed = mix(uRotMin, uRotMax, rRotSpeed);
+        sPos.element(slotIdx).assign(vec4(ox, oy, oz, float(0)));
+        sVel.element(slotIdx).assign(vec4(rotVX, rotVY, rotVZ, float(0)));
         sCol.element(slotIdx).assign(vec4(clR, clG, clB, opac));
-        const startFrame = floor(mix(uFrMin, uFrMax, r1)).toVar();
         sPS.element(slotIdx).assign(vec4(float(0), ssize, srot, startFrame));
         sSV.element(slotIdx).assign(vec4(slife, ssize, opac, clR));
-        const rotSpeed = mix(uRotMin, uRotMax, r3);
-        sEx.element(slotIdx).assign(vec4(clG, clB, rotSpeed, r6.mul(float(100))));
-        sOIA.element(slotIdx).assign(vec4(ox, oy.add(lenOffset), oz, float(1)));
+        sEx.element(slotIdx).assign(
+          vec4(clG, clB, rotSpeed, rNoise.mul(float(100)))
+        );
+        sOIA.element(slotIdx).assign(vec4(ox, oy, oz, float(1)));
+        for (const f of fifoNodes) {
+          if (f.trigger === 0) {
+            writeFifoEvent(f.node, f.capacity, ox, oy, oz, rotVX, rotVY, rotVZ);
+          }
+        }
       });
     });
   });
@@ -819,6 +1014,40 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           });
         }
         ps.x.assign(ps.x.add(uDeltaMs));
+        if (sTrail && trailDesc) {
+          const L = float(trailDesc.length);
+          const tr = float(trailRows);
+          const metaIdx = i.mul(tr).add(tr.sub(float(1)));
+          const meta = atomicLoad(sTrail.element(metaIdx)).toVar();
+          const cursor = meta.x;
+          const count = meta.y;
+          const base = i.mul(tr);
+          const prev = atomicLoad(sTrail.element(base.add(cursor))).toVar();
+          const ddx = pos.x.sub(prev.x);
+          const ddy = pos.y.sub(prev.y);
+          const ddz = pos.z.sub(prev.z);
+          const dist = sqrt(
+            ddx.mul(ddx).add(ddy.mul(ddy)).add(ddz.mul(ddz))
+          );
+          const firstSample = count.lessThan(float(0.5));
+          const farEnough = dist.greaterThanEqual(
+            float(Math.max(1e-6, trailDesc.minVertexDistance))
+          );
+          If(firstSample.or(farEnough), () => {
+            const newCursor = cursor.greaterThanEqual(L.sub(float(1))).select(float(0), cursor.add(float(1)));
+            sTrail.element(base.add(newCursor)).assign(
+              vec4(pos.x, pos.y, pos.z, uNowMs)
+            );
+            sTrail.element(metaIdx).assign(
+              vec4(
+                newCursor,
+                min(count.add(float(1)), float(trailDesc.length)),
+                float(0),
+                float(0)
+              )
+            );
+          });
+        }
         sPos.element(i).assign(vec4(pos, float(0)));
         sVel.element(i).assign(vec4(vel, float(0)));
         sPS.element(i).assign(ps);
@@ -829,6 +1058,20 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           sCol.element(i).assign(vec4(float(0), float(0), float(0), float(0)));
           const oldTop = atomicAdd(sAllocator.element(0), uint(1)).toVar();
           atomicStore(sAllocator.element(oldTop.add(uint(1))), uint(i));
+          for (const f of fifoNodes) {
+            if (f.trigger === 1) {
+              writeFifoEvent(
+                f.node,
+                f.capacity,
+                pos.x,
+                pos.y,
+                pos.z,
+                vel.x,
+                vel.y,
+                vel.z
+              );
+            }
+          }
         });
       });
     });
@@ -841,6 +1084,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
     uniforms: {
       delta: uDelta,
       deltaMs: uDeltaMs,
+      nowMs: uNowMs,
       gravityVelocity: uGravityVelocity,
       noiseStrength: uNoiseStrength,
       noisePower: uNoisePower,
@@ -849,22 +1093,301 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       noiseRotationAmount: uNoiseRotAmount,
       noiseSizeAmount: uNoiseSizeAmount,
       emitCount: uEmitCount,
-      seed: uSeed
+      seed: uSeed,
+      /** Ping-pong FIFO window base for this frame (0 or `windowSize`). */
+      fifoBase: uFifoBase
     },
     shapeUniforms,
     buffers,
     allocatorCount,
     packedDataNode: sCD,
+    // Emitter-pose uniforms, refreshed once per frame by the CPU (scalar only).
+    emitterPose: {
+      positionW: uEmitterPos,
+      wrapperQuat: uWrapperQuat,
+      worldScale: uWorldScale
+    },
     forceFieldInfo: ffNodes ? { offset: forceFieldOffset, countUniform: ffNodes.countUniform } : null,
     collisionPlaneInfo: cpNodes ? { offset: collisionOffset, countUniform: cpNodes.countUniform } : null
   };
 }
-function select01(kind, cone, sphere, planeVal) {
-  const k = floor(kind);
-  return k.equal(float(0)).select(
-    cone,
-    k.equal(float(1)).select(sphere, planeVal)
-  );
+function createSubEmitterInitUpdate(child, childMax, childParams, parent, parentMax, fifo, inheritVelocity, particlesPerEvent) {
+  const capacity = Math.max(1, fifo.capacity);
+  const perEvent = Math.max(1, particlesPerEvent);
+  const windowSize = subEmitterWindowSize(capacity);
+  const uSeed = uniform(float(0));
+  const uInherit = uniform(float(Math.max(0, inheritVelocity)));
+  const uFifoBase = uniform(float(0));
+  const uWrapperQuat = uniform(new Vector4(0, 0, 0, 1));
+  const uEmitterPos = uniform(new Vector4(0, 0, 0, 0));
+  const uWorldScale = uniform(new Vector3(1, 1, 1));
+  const cRadius = uniform(float(childParams.radius));
+  const cThickness = uniform(float(childParams.radiusThickness));
+  const cArc = uniform(float(childParams.arcDeg));
+  const cAngle = uniform(float(childParams.coneAngleDeg));
+  const cRRX = uniform(float(childParams.rectangleRotXDeg));
+  const cRRY = uniform(float(childParams.rectangleRotYDeg));
+  const cRSX = uniform(float(childParams.rectangleScaleX));
+  const cRSY = uniform(float(childParams.rectangleScaleY));
+  const cBSX = uniform(float(childParams.boxScaleX));
+  const cBSY = uniform(float(childParams.boxScaleY));
+  const cBSZ = uniform(float(childParams.boxScaleZ));
+  const cBF = uniform(float(childParams.boxEmitFrom));
+  const cKind = uniform(float(childParams.shapeKind));
+  const cSpeedMin = uniform(float(childParams.speedMin));
+  const cSpeedMax = uniform(float(childParams.speedMax));
+  const cSizeMin = uniform(float(childParams.sizeMin));
+  const cSizeMax = uniform(float(childParams.sizeMax));
+  const cRotMin = uniform(float(childParams.rotMin));
+  const cRotMax = uniform(float(childParams.rotMax));
+  const cOpMin = uniform(float(childParams.opacityMin));
+  const cOpMax = uniform(float(childParams.opacityMax));
+  const cLifeMin = uniform(float(childParams.lifeMin));
+  const cLifeMax = uniform(float(childParams.lifeMax));
+  const cCRR = uniform(float(sRGBToLinear(childParams.colorRMin)));
+  const cCRX = uniform(float(sRGBToLinear(childParams.colorRMax)));
+  const cCGR = uniform(float(sRGBToLinear(childParams.colorGMin)));
+  const cCGX = uniform(float(sRGBToLinear(childParams.colorGMax)));
+  const cCBR = uniform(float(sRGBToLinear(childParams.colorBMin)));
+  const cCBX = uniform(float(sRGBToLinear(childParams.colorBMax)));
+  const cFrMin = uniform(float(childParams.startFrameMin));
+  const cFrMax = uniform(float(childParams.startFrameMax));
+  const cPos = storage(child.position, "vec4", childMax);
+  const cVel = storage(child.velocity, "vec4", childMax);
+  const cCol = storage(child.color, "vec4", childMax);
+  const cPS = storage(child.particleState, "vec4", childMax);
+  const cSV = storage(child.startValues, "vec4", childMax);
+  const cEx = storage(child.startColorsExt, "vec4", childMax);
+  const cOIA = storage(child.orbitalIsActive, "vec4", childMax);
+  const cAlloc = storage(
+    child.allocator,
+    "uint",
+    childMax + 1
+  ).toAtomic();
+  storage(parent.position, "vec4", parentMax);
+  storage(parent.velocity, "vec4", parentMax);
+  const fifoNode = storage(
+    fifo.attribute,
+    "float",
+    fifo.attribute.array.length
+  ).toAtomic();
+  const kernel = Fn(() => {
+    const i = instanceIndex;
+    const base = uFifoBase.toVar();
+    const count = atomicLoad(fifoNode.element(base)).toVar();
+    If(float(i).lessThan(count), () => {
+      const eb = base.add(float(1)).add(float(i).mul(float(SUB_EMITTER_EVENT_STRIDE)));
+      const eX = atomicLoad(fifoNode.element(eb)).toVar();
+      const eY = atomicLoad(fifoNode.element(eb.add(float(1)))).toVar();
+      const eZ = atomicLoad(fifoNode.element(eb.add(float(2)))).toVar();
+      const vX = atomicLoad(fifoNode.element(eb.add(float(3)))).toVar();
+      const vY = atomicLoad(fifoNode.element(eb.add(float(4)))).toVar();
+      const vZ = atomicLoad(fifoNode.element(eb.add(float(5)))).toVar();
+      const parentSpeed = sqrt(
+        vX.mul(vX).add(vY.mul(vY)).add(vZ.mul(vZ))
+      ).toVar();
+      const spAdd = parentSpeed.mul(uInherit);
+      for (let jj = 0; jj < perEvent; jj++) {
+        const oldTop = atomicSub(cAlloc.element(0), uint(1)).toVar();
+        If(oldTop.greaterThan(uint(0)), () => {
+          const slot = atomicLoad(cAlloc.element(oldTop)).toVar();
+          const rBase = i.mul(float(16 * perEvent)).add(float(jj * 16));
+          const rnd = (k) => rand(uSeed.add(rBase.add(float(k + 0.13))));
+          const rNoise = rnd(0);
+          const rA = rnd(1);
+          const rB = rnd(2);
+          const rC = rnd(3);
+          const rSheet = rnd(5);
+          const rSpeed = rnd(6);
+          const rSize = rnd(7);
+          const rRot = rnd(8);
+          const rOp = rnd(9);
+          const rLife = rnd(10);
+          const rColor = rnd(11);
+          const rRotSpeed = rnd(12);
+          const shE = shapeEmitNodes(
+            {
+              kind: cKind,
+              radius: cRadius,
+              thickness: cThickness,
+              arcDeg: cArc,
+              coneAngleDeg: cAngle,
+              rectRX: cRRX,
+              rectRY: cRRY,
+              rectSX: cRSX,
+              rectSY: cRSY,
+              boxSX: cBSX,
+              boxSY: cBSY,
+              boxSZ: cBSZ,
+              boxFrom: cBF,
+              speedMin: cSpeedMin.add(spAdd),
+              speedMax: cSpeedMax.add(spAdd)
+            },
+            rA,
+            rB,
+            rC,
+            rSpeed
+          );
+          const [rx, ry, rz] = quatRotateNodes(
+            shE.px,
+            shE.py,
+            shE.pz,
+            uWrapperQuat
+          );
+          const [rvx, rvy, rvz] = quatRotateNodes(
+            shE.vx,
+            shE.vy,
+            shE.vz,
+            uWrapperQuat
+          );
+          const isWorld = uEmitterPos.w.greaterThan(0.5);
+          const sxf = isWorld.select(uWorldScale.x, float(1));
+          const syf = isWorld.select(uWorldScale.y, float(1));
+          const szf = isWorld.select(uWorldScale.z, float(1));
+          const px = rx.mul(sxf).add(eX);
+          const py = ry.mul(syf).add(eY);
+          const pz = rz.mul(szf).add(eZ);
+          const opac = mix(cOpMin, cOpMax, rOp);
+          const clR = mix(cCRR, cCRX, rColor);
+          const clG = mix(cCGR, cCGX, rColor);
+          const clB = mix(cCBR, cCBX, rColor);
+          const slife = mix(cLifeMin, cLifeMax, rLife).mul(float(1e3));
+          const ssize = mix(cSizeMin, cSizeMax, rSize);
+          const srot = mix(cRotMin, cRotMax, rRot);
+          const startFrame = floor(mix(cFrMin, cFrMax, rSheet)).toVar();
+          const rotSpeed = mix(cRotMin, cRotMax, rRotSpeed);
+          cPos.element(slot).assign(vec4(px, py, pz, float(0)));
+          cVel.element(slot).assign(vec4(rvx, rvy, rvz, float(0)));
+          cCol.element(slot).assign(vec4(clR, clG, clB, opac));
+          cPS.element(slot).assign(
+            vec4(float(0), ssize, srot, startFrame)
+          );
+          cSV.element(slot).assign(vec4(slife, ssize, opac, clR));
+          cEx.element(slot).assign(
+            vec4(clG, clB, rotSpeed, rNoise.mul(float(100)))
+          );
+          cOIA.element(slot).assign(vec4(px, py, pz, float(1)));
+        });
+      }
+      If(i.equal(float(0)), () => {
+        const otherBase = uFifoBase.equal(float(0)).select(
+          float(windowSize),
+          float(0)
+        );
+        atomicStore(fifoNode.element(otherBase), float(0));
+      });
+    });
+  });
+  const initNode = compute(kernel(), capacity);
+  return {
+    initNode,
+    uniforms: {
+      seed: uSeed,
+      fifoBase: uFifoBase,
+      inherit: uInherit,
+      positionW: uEmitterPos,
+      wrapperQuat: uWrapperQuat
+    },
+    buffers: child
+  };
+}
+function createTrailRibbonUpdate(desc) {
+  const L = desc.length;
+  const rows = L + 1;
+  const vertexCount = Math.max(1, desc.maxParticles) * Math.max(1, L);
+  const uNowMs = uniform(float(0));
+  const activeFns = [
+    desc.curveFns.width ?? ((t) => t),
+    desc.curveFns.opacity ?? ((t) => t),
+    desc.curveFns.colorR ?? ((t) => t),
+    desc.curveFns.colorG ?? ((t) => t),
+    desc.curveFns.colorB ?? ((t) => t)
+  ];
+  const curveData = new Float32Array(activeFns.length * CURVE_RESOLUTION);
+  activeFns.forEach((fn, k) => {
+    curveData.set(bakeCurve(fn, CURVE_RESOLUTION), k * CURVE_RESOLUTION);
+  });
+  const IDX_WIDTH = 0;
+  const IDX_OPACITY = 1;
+  const IDX_CR = 2;
+  const IDX_CG = 3;
+  const IDX_CB = 4;
+  const aPos = storage(desc.position, "vec4", vertexCount * 2);
+  const aNext = storage(desc.next, "vec4", vertexCount * 2);
+  const aUVA = storage(desc.uvColorA, "vec4", vertexCount * 2);
+  const aColB = storage(desc.colorB, "vec4", vertexCount * 2);
+  const hist = storage(desc.history, "vec4", rows * desc.maxParticles);
+  const pColor = storage(desc.particleColor, "vec4", desc.maxParticles);
+  const sCD = buffer(curveData, "float", curveData.length);
+  const lookupCurve = createCurveLookup(sCD);
+  const halfWidthBase = float(desc.width * 0.5);
+  const kernel = Fn(() => {
+    const idx = instanceIndex;
+    const lf = float(L);
+    const rowF = float(rows);
+    const i = floor(float(idx).div(lf));
+    const s = float(idx).sub(i.mul(lf));
+    If(i.lessThan(float(desc.maxParticles)), () => {
+      const base = i.mul(rowF);
+      const meta = atomicLoad(hist.element(base.add(lf))).toVar();
+      const cursor = meta.x;
+      const count = meta.y;
+      If(count.greaterThan(float(0.5)), () => {
+        const raw = cursor.sub(s).add(lf);
+        const si = raw.sub(floor(raw.div(lf)).mul(lf));
+        const sample = atomicLoad(hist.element(base.add(si))).toVar();
+        const nextRaw = si.add(float(1));
+        const ni = nextRaw.sub(floor(nextRaw.div(lf)).mul(lf));
+        const nextSample = atomicLoad(hist.element(base.add(ni))).toVar();
+        const t = count.greaterThan(float(1.5)).select(s.div(max(count.sub(float(1)), float(1))), float(0));
+        const wScale = lookupCurve({
+          curveIndex: float(IDX_WIDTH),
+          t
+        });
+        const oScale = lookupCurve({
+          curveIndex: float(IDX_OPACITY),
+          t
+        });
+        const cr = lookupCurve({ curveIndex: float(IDX_CR), t });
+        const cg = lookupCurve({ curveIndex: float(IDX_CG), t });
+        const cb = lookupCurve({ curveIndex: float(IDX_CB), t });
+        const pcol = atomicLoad(pColor.element(i)).toVar();
+        const inRange = s.lessThan(count);
+        const ageOk = desc.maxTime > 0 ? uNowMs.sub(sample.w).lessOrEqual(float(desc.maxTime)) : inRange;
+        const alive = inRange.and(ageOk);
+        const hw = alive.select(halfWidthBase.mul(wScale), float(0));
+        const alpha = alive.select(oScale.mul(pcol.w), float(0));
+        const nPos = count.greaterThan(float(1.5)).select(nextSample.xyz, sample.xyz);
+        for (let side = 0; side < 2; side++) {
+          const vi = float(idx).mul(float(2)).add(float(side));
+          aPos.element(vi).assign(
+            vec4(sample.x, sample.y, sample.z, hw)
+          );
+          aNext.element(vi).assign(
+            vec4(nPos.x, nPos.y, nPos.z, alpha)
+          );
+          aUVA.element(vi).assign(
+            vec4(float(side), t, cr.mul(pcol.x), cg.mul(pcol.y))
+          );
+          aColB.element(vi).assign(
+            vec4(cb.mul(pcol.z), alpha, float(0), float(0))
+          );
+        }
+      });
+    });
+  });
+  const ribbonNode = compute(kernel(), vertexCount);
+  return {
+    ribbonNode,
+    uniforms: { nowMs: uNowMs },
+    buffers: {
+      position: desc.position,
+      next: desc.next,
+      uvColorA: desc.uvColorA,
+      colorB: desc.colorB,
+      history: desc.history
+    }
+  };
 }
 
 // src/js/effects/three-particles/three-particles-constants.ts
@@ -1335,12 +1858,16 @@ function createTrailUniforms(trailUniforms) {
 }
 function createTrailRibbonTSLMaterial(trailUniforms, rendererConfig) {
   const u = createTrailUniforms(trailUniforms);
-  const aTrailAlpha = attribute("trailAlpha");
-  const aTrailColor = attribute("trailColor", "vec4");
-  const aTrailOffset = attribute("trailOffset");
-  const aTrailHalfWidth = attribute("trailHalfWidth");
-  const aTrailNext = attribute("trailNext", "vec3");
-  const aTrailUV = attribute("trailUV", "vec2");
+  const aPosPacked = attribute("position", "vec4");
+  const aNextPacked = attribute("trailNext", "vec4");
+  const aUvColorA = attribute("trailUVColor", "vec4");
+  const aColorBA = attribute("trailColorBA", "vec4");
+  const aTrailAlpha = aNextPacked.w;
+  const aTrailColor = vec4(aUvColorA.z, aUvColorA.w, aColorBA.x, aColorBA.y);
+  const aTrailOffset = aUvColorA.x.sub(float(0.5));
+  const aTrailHalfWidth = aPosPacked.w;
+  const aTrailNext = vec3(aNextPacked.x, aNextPacked.y, aNextPacked.z);
+  const aTrailUV = vec2(aUvColorA.x, aUvColorA.y);
   const vAlpha = varyingProperty("float", "vAlpha");
   const vColor = varyingProperty("vec4", "vColor");
   const vUv = varyingProperty("vec2", "vUv");
@@ -1349,7 +1876,7 @@ function createTrailRibbonTSLMaterial(trailUniforms, rendererConfig) {
     vAlpha.assign(aTrailAlpha);
     vColor.assign(aTrailColor);
     vUv.assign(aTrailUV);
-    const current = vec3(positionLocal);
+    const current = vec3(aPosPacked.x, aPosPacked.y, aPosPacked.z);
     const next = vec3(aTrailNext);
     const rawTangent = next.sub(current);
     const tangentLen = length(rawTangent);
@@ -1458,47 +1985,57 @@ var pair = (v) => {
   }
   return [0, 0];
 };
-var shapeKind = (t) => {
+var shapeKindOf = (t) => {
   switch (t) {
     case "SPHERE":
-      return 1;
+      return 0;
     case "CONE":
+      return 1;
+    case "CIRCLE":
+      return 2;
+    case "RECTANGLE":
+      return 3;
+    case "BOX":
+      return 4;
     default:
       return 0;
   }
 };
-function createComputePipeline(maxParticles, instanced, normalizedConfig, particleSystemId, forceFieldCount, collisionPlaneCount = 0) {
+var boxEmitFromOf = (e) => e === "SHELL" ? 1 : e === "EDGE" ? 2 : 0;
+function encodeShapeEmitParams(normalizedConfig, particleSystemId) {
   const bakedCurves = bakeParticleSystemCurves(normalizedConfig, particleSystemId);
-  const v = normalizedConfig.velocityOverLifetime;
-  const flags = {
-    sizeOverLifetime: normalizedConfig.sizeOverLifetime.isActive,
-    opacityOverLifetime: normalizedConfig.opacityOverLifetime.isActive,
-    colorOverLifetime: normalizedConfig.colorOverLifetime.isActive,
-    rotationOverLifetime: normalizedConfig.rotationOverLifetime.isActive,
-    linearVelocity: v.isActive && (isLifeTimeCurve(v.linear.x ?? 0) || isLifeTimeCurve(v.linear.y ?? 0) || isLifeTimeCurve(v.linear.z ?? 0) || v.linear.x !== 0 || v.linear.y !== 0 || v.linear.z !== 0),
-    orbitalVelocity: v.isActive && (isLifeTimeCurve(v.orbital.x ?? 0) || isLifeTimeCurve(v.orbital.y ?? 0) || isLifeTimeCurve(v.orbital.z ?? 0) || v.orbital.x !== 0 || v.orbital.y !== 0 || v.orbital.z !== 0),
-    noise: normalizedConfig.noise.isActive,
-    forceFields: forceFieldCount > 0,
-    collisionPlanes: collisionPlaneCount > 0
-  };
-  const [lifeMin, lifeMax] = pair(normalizedConfig.startLifetime);
-  const [spdMin, spdMax] = pair(normalizedConfig.startSpeed);
-  const [szMin, szMax] = pair(normalizedConfig.startSize);
-  const [rotMin, rotMax] = pair(normalizedConfig.startRotation);
-  const [opMin, opMax] = pair(normalizedConfig.startOpacity);
+  const pairLocal = pair;
+  const [lifeMin, lifeMax] = pairLocal(normalizedConfig.startLifetime);
+  const [spdMin, spdMax] = pairLocal(normalizedConfig.startSpeed);
+  const [szMin, szMax] = pairLocal(normalizedConfig.startSize);
+  const [rotMin, rotMax] = pairLocal(normalizedConfig.startRotation);
+  const [opMin, opMax] = pairLocal(normalizedConfig.startOpacity);
   const cMin = normalizedConfig.startColor.min || { r: 1, g: 1, b: 1 };
   const cMax = normalizedConfig.startColor.max || { r: 1, g: 1, b: 1 };
   const sf = normalizedConfig.textureSheetAnimation && normalizedConfig.textureSheetAnimation.startFrame || 0;
-  const sfPair = pair(sf);
+  const sfPair = pairLocal(sf);
   const shp = normalizedConfig.shape;
-  const shapeParams = {
-    shapeKind: shapeKind(shp.shapeType),
-    radius: shp.radius ?? 1,
-    length: shp.length ?? 0,
-    arc: shp.arc ?? 360,
-    spreadX: shp.spreadX ?? 0,
-    spreadY: shp.spreadY ?? 0,
-    spreadZ: shp.spreadZ ?? 0,
+  const sph = shp.sphere;
+  const cone = shp.cone;
+  const circ = shp.circle;
+  const rect = shp.rectangle;
+  const bx = shp.box;
+  const num = (v, fallback) => typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  const kind = shapeKindOf(shp.shape);
+  return {
+    shapeKind: kind,
+    radius: shp.shape === "CONE" ? num(cone?.radius, 1) : shp.shape === "CIRCLE" ? num(circ?.radius, 1) : num(sph?.radius, 1),
+    radiusThickness: shp.shape === "CONE" ? num(cone?.radiusThickness, 1) : shp.shape === "CIRCLE" ? num(circ?.radiusThickness, 1) : num(sph?.radiusThickness, 1),
+    arcDeg: shp.shape === "CONE" ? num(cone?.arc, 360) : shp.shape === "CIRCLE" ? num(circ?.arc, 360) : num(sph?.arc, 360),
+    coneAngleDeg: num(cone?.angle, 25),
+    rectangleRotXDeg: num(rect?.rotation?.x, 0),
+    rectangleRotYDeg: num(rect?.rotation?.y, 0),
+    rectangleScaleX: num(rect?.scale?.x, 1),
+    rectangleScaleY: num(rect?.scale?.y, 1),
+    boxScaleX: num(bx?.scale?.x, 1),
+    boxScaleY: num(bx?.scale?.y, 1),
+    boxScaleZ: num(bx?.scale?.z, 1),
+    boxEmitFrom: boxEmitFromOf(bx?.emitFrom),
     speedMin: spdMin,
     speedMax: spdMax,
     sizeMin: szMin,
@@ -1525,6 +2062,25 @@ function createComputePipeline(maxParticles, instanced, normalizedConfig, partic
     linearYCurve: bakedCurves.linearVelY ?? -1,
     linearZCurve: bakedCurves.linearVelZ ?? -1
   };
+}
+function createComputePipeline(maxParticles, instanced, normalizedConfig, particleSystemId, forceFieldCount, collisionPlaneCount = 0, subFifos, trailDesc) {
+  const bakedCurves = bakeParticleSystemCurves(normalizedConfig, particleSystemId);
+  const v = normalizedConfig.velocityOverLifetime;
+  const flags = {
+    sizeOverLifetime: normalizedConfig.sizeOverLifetime.isActive,
+    opacityOverLifetime: normalizedConfig.opacityOverLifetime.isActive,
+    colorOverLifetime: normalizedConfig.colorOverLifetime.isActive,
+    rotationOverLifetime: normalizedConfig.rotationOverLifetime.isActive,
+    linearVelocity: v.isActive && (isLifeTimeCurve(v.linear.x ?? 0) || isLifeTimeCurve(v.linear.y ?? 0) || isLifeTimeCurve(v.linear.z ?? 0) || v.linear.x !== 0 || v.linear.y !== 0 || v.linear.z !== 0),
+    orbitalVelocity: v.isActive && (isLifeTimeCurve(v.orbital.x ?? 0) || isLifeTimeCurve(v.orbital.y ?? 0) || isLifeTimeCurve(v.orbital.z ?? 0) || v.orbital.x !== 0 || v.orbital.y !== 0 || v.orbital.z !== 0),
+    noise: normalizedConfig.noise.isActive,
+    forceFields: forceFieldCount > 0,
+    collisionPlanes: collisionPlaneCount > 0
+  };
+  const shapeParams = encodeShapeEmitParams(
+    normalizedConfig,
+    particleSystemId
+  );
   const built = createModifierStorageBuffers(
     maxParticles,
     instanced,
@@ -1539,7 +2095,9 @@ function createComputePipeline(maxParticles, instanced, normalizedConfig, partic
     flags,
     shapeParams,
     forceFieldCount,
-    collisionPlaneCount
+    collisionPlaneCount,
+    subFifos ?? [],
+    trailDesc
   );
 }
 
@@ -1550,7 +2108,11 @@ function enableWebGPU(renderer) {
     createTSLTrailMaterial,
     createComputePipeline,
     encodeForceFieldsForGPU,
-    encodeCollisionPlanesForGPU
+    encodeCollisionPlanesForGPU,
+    createSubEmitterFifoAttribute,
+    createSubEmitterInitUpdate,
+    createTrailRibbonUpdate,
+    encodeShapeEmitParams
   };
   return registerTSLMaterialFactory(
     factory,
@@ -1558,6 +2120,6 @@ function enableWebGPU(renderer) {
   );
 }
 
-export { createComputePipeline, createTSLParticleMaterial, createTSLTrailMaterial, enableWebGPU, encodeCollisionPlanesForGPU, encodeForceFieldsForGPU };
+export { createComputePipeline, createModifierStorageBuffers, createSubEmitterFifoAttribute, createSubEmitterInitUpdate, createTSLParticleMaterial, createTSLTrailMaterial, createTrailRibbonUpdate, enableWebGPU, encodeCollisionPlanesForGPU, encodeForceFieldsForGPU, encodeShapeEmitParams, subEmitterWindowSize };
 //# sourceMappingURL=webgpu.js.map
 //# sourceMappingURL=webgpu.js.map

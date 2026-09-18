@@ -169,7 +169,9 @@ async function playCard(id) {
     ctx.renderer.render(ctx.scene, ctx.camera);
     const st = document.getElementById('stats-' + id);
     if (st) st.textContent = `${(1 / Math.max(d, 1e-4)).toFixed(0)} FPS ${(d * 1000).toFixed(1)}ms +${ctx.elapsed.toFixed(1)}s`;
-    if (ctx.elapsed - ctx.dbgLast >= 1.0) { ctx.dbgLast = ctx.elapsed; debugSnapshot(`t=${ctx.dbgTicks}`, ctx); }
+    // Event-based diagnostics (no per-second spam): one snapshot on the first
+    // rendered frame per card, plus the `init` pass and `window.__probeGPU(id)`.
+    if (ctx.dbgTicks === 1) debugSnapshot('frame1', ctx);
     activeLoop = requestAnimationFrame(step);
   };
   activeLoop = requestAnimationFrame(step);

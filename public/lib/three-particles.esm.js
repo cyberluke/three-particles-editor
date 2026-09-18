@@ -1,6 +1,7 @@
 import Easing from './easing-functions.js?v=5';
 import * as THREE3 from './three.module.js?v=5';
 import { ObjectUtils } from './three-utils/index.js?v=5';
+import { StorageBufferAttribute } from './three.webgpu.js?v=5';
 
 // src/js/effects/three-particles/version.ts
 var REVISION = "4.0.0" ;
@@ -418,6 +419,16 @@ var getCurveFunctionFromConfig = (particleSystemId, lifetimeCurve) => {
   if (lifetimeCurve.type === "EASING" /* EASING */) {
     return lifetimeCurve.curveFunction;
   }
+  const raw = lifetimeCurve;
+  if (Array.isArray(raw.bezierPoints)) {
+    return createBezierCurveFunction(
+      particleSystemId,
+      raw.bezierPoints
+    );
+  }
+  if (typeof raw.curveFunction === "function") {
+    return raw.curveFunction;
+  }
   throw new Error(`Unsupported value type: ${lifetimeCurve}`);
 };
 var calculateValue = (particleSystemId, value, time = 0) => {
@@ -590,6 +601,13 @@ var _particleSystemId = 0;
 var createdParticleSystems = [];
 var _tslMaterialFactory = null;
 var _rendererBackendIsGPU = true;
+var _cpuPreferenceWarned = false;
+var _cpuPreferencePreferenceWarn = () => {
+  _cpuPreferenceWarned = true;
+  console.warn(
+    "three-particles: simulationBackend 'CPU' maps to the GPU kernel in 4.0.0 (GPU-only build)."
+  );
+};
 var registerTSLMaterialFactory = (factory, options) => {
   if (options && "renderer" in options && !isComputeCapableRenderer(options.renderer)) {
     console.warn(
@@ -642,6 +660,15 @@ var blendingMap = {
   "THREE.AdditiveBlending": THREE3.AdditiveBlending,
   "THREE.SubtractiveBlending": THREE3.SubtractiveBlending,
   "THREE.MultiplyBlending": THREE3.MultiplyBlending
+};
+var toBlendingConstant = (v) => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const key = v.startsWith("THREE.") ? v : `THREE.${v}`;
+    const mapped = blendingMap[key];
+    if (mapped !== void 0) return mapped;
+  }
+  return THREE3.NormalBlending;
 };
 var getDefaultParticleSystemConfig = () => JSON.parse(JSON.stringify(DEFAULT_PARTICLE_SYSTEM_CONFIG));
 var DEFAULT_PARTICLE_SYSTEM_CONFIG = {
@@ -868,17 +895,37 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     { applyToFirstObject: false, skippedProperties: [] }
   );
   if (normalizedConfig.simulationBackend === "CPU") {
-    throw new Error(
-      "three-particles: simulationBackend 'CPU' is not supported in @cyberluke/three-particles 4.0.0. Use 'GPU' or 'AUTO'."
-    );
+    if (!_cpuPreferenceWarned) {
+      _cpuPreferencePreferenceWarn();
+    }
+    normalizedConfig.simulationBackend = "GPU" /* GPU */;
   }
   const rrType = normalizedConfig.renderer.rendererType || "POINTS" /* POINTS */;
   const useInstancing = rrType === "INSTANCED" /* INSTANCED */ || rrType === "MESH" /* MESH */;
-  if (rrType === "TRAIL" /* TRAIL */) {
-    throw new Error(
-      "three-particles: RendererType.TRAIL is not implemented on the WebGPU compute kernel in @cyberluke/three-particles 4.0.0. Use POINTS / INSTANCED / MESH."
-    );
-  }
+  const trailConfig = normalizedConfig.renderer.trail;
+  const trailLength = Math.max(2, Math.round(trailConfig?.length ?? 20));
+  const trailHistoryAttribute = rrType === "TRAIL" /* TRAIL */ ? new StorageBufferAttribute(
+    new Float32Array(maxParticles * (trailLength + 1) * 4),
+    4
+  ) : null;
+  const trailDesc = trailHistoryAttribute ? {
+    attribute: trailHistoryAttribute,
+    length: trailLength,
+    minVertexDistance: trailConfig?.minVertexDistance ?? 0,
+    maxTime: (trailConfig?.maxTime ?? 0) * 1e3
+  } : null;
+  const fifoWindow = (capacity) => 1 + 6 * Math.max(1, capacity);
+  const subEmitterConfigs = normalizedConfig.subEmitters ?? [];
+  const fifos = subEmitterConfigs.map((se) => {
+    const capacity = Math.max(1, Math.round(se.maxInstances ?? 32));
+    return {
+      attribute: factory.createSubEmitterFifoAttribute(capacity),
+      trigger: se.trigger === "BIRTH" ? 0 : 1,
+      capacity,
+      windowSize: fifoWindow(capacity)
+    };
+  });
+  const fifoBaseStride = fifos.reduce((m, f) => Math.max(m, f.windowSize), 0);
   const forceFields = normalizeForceFields(normalizedConfig.forceFields);
   const collisionPlanes = normalizeCollisionPlanes(normalizedConfig.collisionPlanes);
   const pipeline = factory.createComputePipeline(
@@ -888,8 +935,114 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     _particleSystemId,
     // pre-increment inside generalData below would be off by 1; use the raw next id
     forceFields.length,
-    collisionPlanes.length
+    collisionPlanes.length,
+    fifos,
+    trailDesc ?? void 0
   );
+  const ribbonPipeline = trailDesc ? factory.createTrailRibbonUpdate({
+    position: new StorageBufferAttribute(
+      new Float32Array(maxParticles * trailLength * 2 * 4),
+      4
+    ),
+    next: new StorageBufferAttribute(
+      new Float32Array(maxParticles * trailLength * 2 * 4),
+      4
+    ),
+    uvColorA: new StorageBufferAttribute(
+      new Float32Array(maxParticles * trailLength * 2 * 4),
+      4
+    ),
+    colorB: new StorageBufferAttribute(
+      new Float32Array(maxParticles * trailLength * 2 * 4),
+      4
+    ),
+    history: trailDesc.attribute,
+    particleColor: pipeline.buffers.color,
+    curveFns: {
+      width: trailConfig?.widthOverTrail ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.widthOverTrail) : void 0,
+      opacity: trailConfig?.opacityOverTrail ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.opacityOverTrail) : void 0,
+      colorR: trailConfig?.colorOverTrail?.isActive ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.colorOverTrail.r) : void 0,
+      colorG: trailConfig?.colorOverTrail?.isActive ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.colorOverTrail.g) : void 0,
+      colorB: trailConfig?.colorOverTrail?.isActive ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.colorOverTrail.b) : void 0
+    },
+    width: trailConfig?.width ?? 1,
+    length: trailLength,
+    maxTime: trailDesc.maxTime,
+    maxParticles
+  }) : null;
+  const subEntries = [];
+  for (let fi = 0; fi < subEmitterConfigs.length; fi++) {
+    const se = subEmitterConfigs[fi];
+    const fifo = fifos[fi];
+    const childCfg = ObjectUtils.deepMerge(
+      getDefaultParticleSystemConfig(),
+      se.config ?? {},
+      { applyToFirstObject: false, skippedProperties: [] }
+    );
+    const firstBurst = childCfg.emission?.bursts?.[0];
+    const burstCount = firstBurst ? Math.max(
+      1,
+      Math.ceil(
+        calculateValue(
+          _particleSystemId + 1 + fi,
+          firstBurst.count,
+          0
+        ) * (firstBurst.cycles ?? 1)
+      )
+    ) : 1;
+    const perEvent = Math.min(burstCount, fifo.capacity);
+    const childMax = Math.max(2, Math.min(perEvent * fifo.capacity, 65536));
+    const childInstanced = childCfg.renderer?.rendererType === "INSTANCED" /* INSTANCED */ || childCfg.renderer?.rendererType === "MESH" /* MESH */;
+    const childPipeline = factory.createComputePipeline(
+      childMax,
+      childInstanced,
+      childCfg,
+      _particleSystemId + 1 + fi,
+      0,
+      0,
+      [],
+      void 0
+    );
+    const childShapeParams = factory.encodeShapeEmitParams(
+      childCfg,
+      _particleSystemId + 1 + fi
+    );
+    const init = factory.createSubEmitterInitUpdate(
+      childPipeline.buffers,
+      childMax,
+      childShapeParams,
+      pipeline.buffers,
+      maxParticles,
+      fifo,
+      se.inheritVelocity ?? 0,
+      perEvent
+    );
+    subEntries.push({
+      fifo,
+      pipeline: childPipeline,
+      init,
+      instanced: childInstanced,
+      cfg: childCfg,
+      object: null,
+      perEvent,
+      gravity: childCfg.gravity,
+      noise: childCfg.noise?.isActive ? {
+        isActive: true,
+        strength: childCfg.noise.strength,
+        noisePower: 0.15 * childCfg.noise.strength / Math.max(1e-6, 2 - Math.pow(2, -childCfg.noise.octaves)),
+        frequency: childCfg.noise.frequency,
+        positionAmount: childCfg.noise.positionAmount,
+        rotationAmount: childCfg.noise.rotationAmount,
+        sizeAmount: childCfg.noise.sizeAmount,
+        fbmMax: 2 - Math.pow(2, -childCfg.noise.octaves)
+      } : null,
+      rate: childCfg.emission?.rateOverTime ? calculateValue(_particleSystemId + 1 + fi, childCfg.emission.rateOverTime, 0) : 0,
+      acc: 0,
+      lastEmit: 0,
+      poseFrom: "self",
+      selfPose: { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, sx: 1, sy: 1, sz: 1, isWorld: childCfg.simulationSpace === "WORLD" /* WORLD */ ? 1 : 0 }
+    });
+  }
   const elapsedUniform = { value: 0 };
   const sharedUniforms = {
     elapsed: elapsedUniform,
@@ -925,7 +1078,7 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
   sharedUniforms.backgroundColor.value.setRGB(bgCol.r ?? 1, bgCol.g ?? 1, bgCol.b ?? 1);
   const rendererConfig = {
     transparent: !!normalizedConfig.renderer.transparent,
-    blending: normalizedConfig.renderer.blending ?? THREE3.NormalBlending,
+    blending: toBlendingConstant(normalizedConfig.renderer.blending),
     depthTest: normalizedConfig.renderer.depthTest !== false,
     depthWrite: normalizedConfig.renderer.depthWrite !== false
   };
@@ -969,6 +1122,95 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     geometry = g;
     g.instanceCount = maxParticles;
   }
+  let trailGeometry = null;
+  if (ribbonPipeline && trailDesc) {
+    const rb = ribbonPipeline.buffers;
+    const g = new THREE3.BufferGeometry();
+    g.setAttribute("position", rb.position);
+    g.setAttribute("trailNext", rb.next);
+    g.setAttribute("trailUVColor", rb.uvColorA);
+    g.setAttribute("trailColorBA", rb.colorB);
+    const idx = new Uint32Array(maxParticles * (trailLength - 1) * 6);
+    let o = 0;
+    for (let pIdx = 0; pIdx < maxParticles; pIdx++) {
+      for (let s = 0; s < trailLength - 1; s++) {
+        const b = pIdx * trailLength * 2 + s * 2;
+        idx[o++] = b;
+        idx[o++] = b + 1;
+        idx[o++] = b + 2;
+        idx[o++] = b + 1;
+        idx[o++] = b + 3;
+        idx[o++] = b + 2;
+      }
+    }
+    g.setIndex(new THREE3.BufferAttribute(idx, 1));
+    g.setDrawRange(0, maxParticles * trailLength * 2);
+    trailGeometry = g;
+  }
+  const trailMaterial = trailGeometry ? factory.createTSLTrailMaterial(
+    {
+      map: { value: normalizedConfig.map ?? getDefaultTexture() },
+      useMap: { value: !!normalizedConfig.map },
+      discardBackgroundColor: { value: !!normalizedConfig.renderer.discardBackgroundColor },
+      backgroundColor: { value: normalizedConfig.renderer.backgroundColor ?? { r: 1, g: 1, b: 1 } },
+      backgroundColorTolerance: { value: normalizedConfig.renderer.backgroundColorTolerance ?? 0 },
+      softParticlesEnabled: { value: !!normalizedConfig.renderer.softParticles?.enabled },
+      softParticlesIntensity: {
+        value: Math.max(normalizedConfig.renderer.softParticles?.intensity ?? 1, 1e-3)
+      },
+      sceneDepthTexture: {
+        value: normalizedConfig.renderer.softParticles?.depthTexture ?? null
+      },
+      cameraNearFar: { value: new THREE3.Vector2(0.1, 1e3) }
+    },
+    {
+      transparent: !!normalizedConfig.renderer.transparent,
+      blending: toBlendingConstant(normalizedConfig.renderer.blending),
+      depthTest: normalizedConfig.renderer.depthTest !== false,
+      depthWrite: normalizedConfig.renderer.depthWrite !== false
+    }
+  ) : null;
+  const particleSystem = trailGeometry ? new THREE3.Mesh(trailGeometry, trailMaterial) : useInstancing ? new THREE3.Mesh(geometry, material) : new THREE3.Points(geometry, material);
+  particleSystem.frustumCulled = false;
+  for (const e of subEntries) {
+    const cb = e.pipeline.buffers;
+    const childMax = e.pipeline.allocatorCount - 1;
+    const childGeometry = e.instanced ? (() => {
+      const g = new THREE3.InstancedBufferGeometry();
+      const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
+      const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
+      g.setAttribute("position", new THREE3.BufferAttribute(quad, 3));
+      g.setIndex(new THREE3.BufferAttribute(idx, 1));
+      g.instanceCount = childMax;
+      g.setAttribute("instanceOffset", cb.position);
+      g.setAttribute("instanceColor", cb.color);
+      g.setAttribute("instanceParticleState", cb.particleState);
+      g.setAttribute("instanceStartValues", cb.startValues);
+      return g;
+    })() : (() => {
+      const g = new THREE3.BufferGeometry();
+      g.setAttribute("position", cb.position);
+      g.setAttribute("color", cb.color);
+      g.setAttribute("particleState", cb.particleState);
+      g.setAttribute("startValues", cb.startValues);
+      g.setDrawRange(0, childMax);
+      return g;
+    })();
+    const childUniforms = {
+      ...sharedUniforms,
+      useInstancing: { value: e.instanced }
+    };
+    const childMaterial = factory.createTSLParticleMaterial(
+      e.cfg.renderer?.rendererType || "POINTS" /* POINTS */,
+      childUniforms,
+      rendererConfig,
+      true
+    );
+    const childObject = e.instanced ? new THREE3.Mesh(childGeometry, childMaterial) : new THREE3.Points(childGeometry, childMaterial);
+    childObject.frustumCulled = false;
+    particleSystem.add(childObject);
+    e.object = childObject;
+  }
   if (import.meta.env?.DEV !== false) {
     const required = useInstancing ? [
       "position",
@@ -990,8 +1232,31 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       }
     }
   }
-  const particleSystem = useInstancing ? new THREE3.Mesh(geometry, material) : new THREE3.Points(geometry, material);
-  particleSystem.frustumCulled = false;
+  const _numOr = (v, d) => typeof v === "number" && Number.isFinite(v) ? v : d;
+  const xform = normalizedConfig.transform;
+  if (xform?.position) {
+    particleSystem.position.set(
+      _numOr(xform.position.x, 0),
+      _numOr(xform.position.y, 0),
+      _numOr(xform.position.z, 0)
+    );
+  }
+  if (xform?.rotation) {
+    particleSystem.rotation.set(
+      THREE3.MathUtils.degToRad(_numOr(xform.rotation.x, 0)),
+      THREE3.MathUtils.degToRad(_numOr(xform.rotation.y, 0)),
+      THREE3.MathUtils.degToRad(_numOr(xform.rotation.z, 0))
+    );
+  }
+  if (xform?.scale) {
+    particleSystem.scale.set(
+      _numOr(xform.scale.x, 1),
+      _numOr(xform.scale.y, 1),
+      _numOr(xform.scale.z, 1)
+    );
+  }
+  particleSystem.updateMatrix();
+  particleSystem.updateMatrixWorld(true);
   if (normalizedConfig.simulationSpace === "WORLD" /* WORLD */) {
     particleSystem.matrixWorldAutoUpdate = false;
     particleSystem.matrixWorld.identity();
@@ -1087,8 +1352,80 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     material,
     geometry,
     rrType,
-    sharedUniforms
+    sharedUniforms,
+    allComputeNodes: [
+      ...pipeline.computeNodes ?? [],
+      ...ribbonPipeline ? [ribbonPipeline.ribbonNode] : [],
+      ...subEntries.flatMap((e) => [
+        e.init.initNode,
+        ...e.pipeline.computeNodes ?? []
+      ])
+    ],
+    fifoBaseStride,
+    ribbonUniforms: ribbonPipeline ? ribbonPipeline.uniforms : void 0,
+    ribbonBuffers: ribbonPipeline ? ribbonPipeline.buffers : void 0,
+    frameParity: 0,
+    subEntries: subEntries.map((e) => ({
+      fifo: { capacity: e.fifo.capacity, windowSize: e.fifo.windowSize },
+      pipeline: e.pipeline,
+      init: e.init,
+      gravity: e.gravity,
+      noise: e.noise,
+      rate: e.rate,
+      acc: 0,
+      isWorld: e.selfPose.isWorld,
+      quat: [e.selfPose.qx, e.selfPose.qy, e.selfPose.qz, e.selfPose.qw],
+      scale: [e.selfPose.sx, e.selfPose.sy, e.selfPose.sz],
+      position: [
+        _numOr(e.cfg.transform?.position?.x, 0),
+        _numOr(e.cfg.transform?.position?.y, 0),
+        _numOr(e.cfg.transform?.position?.z, 0)
+      ]
+    }))
   };
+  for (const e of subEntries) {
+    if (!e.object) continue;
+    const tf = e.cfg.transform;
+    if (tf?.position) {
+      e.object.position.set(
+        _numOr(tf.position.x, 0),
+        _numOr(tf.position.y, 0),
+        _numOr(tf.position.z, 0)
+      );
+    }
+    if (tf?.rotation) {
+      e.object.rotation.set(
+        THREE3.MathUtils.degToRad(_numOr(tf.rotation.x, 0)),
+        THREE3.MathUtils.degToRad(_numOr(tf.rotation.y, 0)),
+        THREE3.MathUtils.degToRad(_numOr(tf.rotation.z, 0))
+      );
+    }
+    if (tf?.scale) {
+      e.object.scale.set(
+        _numOr(tf.scale.x, 1),
+        _numOr(tf.scale.y, 1),
+        _numOr(tf.scale.z, 1)
+      );
+    }
+    e.object.updateMatrix();
+    const q = new THREE3.Quaternion().setFromEuler(
+      new THREE3.Euler(
+        THREE3.MathUtils.degToRad(_numOr(tf?.rotation?.x, 0)),
+        THREE3.MathUtils.degToRad(_numOr(tf?.rotation?.y, 0)),
+        THREE3.MathUtils.degToRad(_numOr(tf?.rotation?.z, 0)),
+        "XYZ"
+      )
+    );
+    const entry = props.subEntries?.[subEntries.indexOf(e)];
+    if (entry) {
+      entry.quat = [q.x, q.y, q.z, q.w];
+      entry.scale = [
+        _numOr(tf?.scale?.x, 1),
+        _numOr(tf?.scale?.y, 1),
+        _numOr(tf?.scale?.z, 1)
+      ];
+    }
+  }
   createdParticleSystems.push(props);
   const update = (cycleData) => {
     updateParticleSystemInstance(props, cycleData);
@@ -1122,7 +1459,7 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
      * available through an explicit (throttled) `getArrayBufferAsync` read-back.
      */
     getActiveParticleCount: () => -1,
-    computeNode: pipeline.computeNodes ?? pipeline.computeNode,
+    computeNode: props.allComputeNodes && props.allComputeNodes.length > 0 ? props.allComputeNodes : pipeline.computeNodes ?? pipeline.computeNode,
     /**
          * ?? Temporary one-shot GPU debug handle (deprecated, no per-frame cost) ????
          * getActiveParticleCount() stays -1; this object is the raw material for an
@@ -1152,7 +1489,11 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
     normalizedCollisionPlanes,
     emission,
     computePipeline: pipeline,
-    maxParticles = 0
+    maxParticles = 0,
+    allComputeNodes,
+    subEntries,
+    fifoBaseStride = 0,
+    ribbonUniforms
   } = props;
   if (!pipeline) return;
   const u = pipeline.uniforms;
@@ -1245,6 +1586,89 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   if (u.noisePositionAmount) u.noisePositionAmount.value = n.positionAmount;
   if (u.noiseRotationAmount) u.noiseRotationAmount.value = n.rotationAmount;
   if (u.noiseSizeAmount) u.noiseSizeAmount.value = n.sizeAmount;
+  const pose = pipeline.emitterPose;
+  if (pose) {
+    if (normalizedConfig.simulationSpace === "WORLD" /* WORLD */) {
+      particleSystem.updateMatrix();
+      _tmpM1.copy(particleSystem.matrix);
+      if (particleSystem.parent) {
+        particleSystem.parent.updateMatrixWorld();
+        _tmpM1.premultiply(particleSystem.parent.matrixWorld);
+      }
+      _tmpM1.decompose(_tmpV1, _tmpQ1, _tmpV2);
+      pose.positionW.value.set(_tmpV1.x, _tmpV1.y, _tmpV1.z, 1);
+      pose.wrapperQuat.value.set(_tmpQ1.x, _tmpQ1.y, _tmpQ1.z, _tmpQ1.w);
+      pose.worldScale.value.set(_tmpV2.x || 1, _tmpV2.y || 1, _tmpV2.z || 1);
+    } else {
+      pose.positionW.value.set(0, 0, 0, 0);
+      pose.wrapperQuat.value.set(0, 0, 0, 1);
+      pose.worldScale.value.set(1, 1, 1);
+    }
+  }
+  const parity = (props.frameParity ?? 0) % 2;
+  const fifoBase = parity * fifoBaseStride;
+  if (u.fifoBase) u.fifoBase.value = fifoBase;
+  if (u.nowMs) u.nowMs.value = now;
+  if (ribbonUniforms?.nowMs) ribbonUniforms.nowMs.value = now;
+  for (const e of subEntries ?? []) {
+    const cp = e.pipeline;
+    if (!cp) continue;
+    const cu = cp.uniforms;
+    if (cu.delta) cu.delta.value = delta;
+    if (cu.deltaMs) cu.deltaMs.value = delta * 1e3;
+    if (cu.nowMs) cu.nowMs.value = now;
+    if (cu.seed) cu.seed.value = now * 1e-3;
+    if (cu.gravityVelocity) {
+      cu.gravityVelocity.value.set(
+        0,
+        e.gravity,
+        0
+      );
+    }
+    if (e.noise) {
+      if (cu.noiseStrength) cu.noiseStrength.value = e.noise.strength;
+      if (cu.noisePower) cu.noisePower.value = e.noise.noisePower / Math.max(e.noise.fbmMax, 1e-6);
+      if (cu.noiseFrequency) cu.noiseFrequency.value = e.noise.frequency;
+      if (cu.noisePositionAmount) cu.noisePositionAmount.value = e.noise.positionAmount;
+      if (cu.noiseRotationAmount) cu.noiseRotationAmount.value = e.noise.rotationAmount;
+      if (cu.noiseSizeAmount) cu.noiseSizeAmount.value = e.noise.sizeAmount;
+    }
+    if (cu.fifoBase) cu.fifoBase.value = fifoBase;
+    if (e.init.uniforms.seed) e.init.uniforms.seed.value = now * 1e-3;
+    if (e.init.uniforms.fifoBase) e.init.uniforms.fifoBase.value = fifoBase;
+    let childEmit = 0;
+    if (e.rate > 0) {
+      e.acc += e.rate * delta / 1;
+      childEmit = Math.floor(e.acc);
+      if (childEmit > 0) e.acc -= childEmit;
+    }
+    const childCapacity = Math.max(2, (cp.allocatorCount ?? 2) - 1);
+    if (childEmit > childCapacity) childEmit = childCapacity;
+    if (cp.emitNode) cp.emitNode.count = Math.max(1, childEmit);
+    if (cu.emitCount) cu.emitCount.value = childEmit;
+    const cpose = cp.emitterPose;
+    if (cpose) {
+      if (e.isWorld === 1) {
+        cpose.positionW.value.set(e.position[0], e.position[1], e.position[2], 1);
+        cpose.wrapperQuat.value.set(e.quat[0], e.quat[1], e.quat[2], e.quat[3]);
+        cpose.worldScale.value.set(e.scale[0], e.scale[1], e.scale[2]);
+      } else {
+        cpose.positionW.value.set(0, 0, 0, 0);
+        cpose.wrapperQuat.value.set(0, 0, 0, 1);
+        cpose.worldScale.value.set(1, 1, 1);
+      }
+    }
+    const ip = e.init.uniforms;
+    if (ip.positionW && ip.wrapperQuat) {
+      if (e.isWorld === 1) {
+        ip.positionW.value.set(e.position[0], e.position[1], e.position[2], 1);
+        ip.wrapperQuat.value.set(e.quat[0], e.quat[1], e.quat[2], e.quat[3]);
+      } else {
+        ip.positionW.value.set(0, 0, 0, 0);
+        ip.wrapperQuat.value.set(0, 0, 0, 1);
+      }
+    }
+  }
   const ffInfo = pipeline.forceFieldInfo;
   const cInfo = pipeline.collisionPlaneInfo ?? null;
   if ((ffInfo || cInfo) && _tslMaterialFactory) {
@@ -1290,12 +1714,33 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   } else {
     _lastUploadStampMap.set(bufs, stamp + 1);
   }
+  for (const e of subEntries ?? []) {
+    const cb = e.pipeline?.buffers;
+    if (cb && !_lastUploadStampMap.has(cb)) {
+      for (const key of Object.keys(cb)) {
+        const a = cb[key];
+        if (a && "needsUpdate" in a) a.needsUpdate = true;
+      }
+      _lastUploadStampMap.set(cb, 1);
+    }
+  }
+  const rb = props.ribbonBuffers;
+  if (rb && !_lastUploadStampMap.has(rb)) {
+    for (const key of Object.keys(rb)) {
+      const a = rb[key];
+      if (a && "needsUpdate" in a) a.needsUpdate = true;
+    }
+    _lastUploadStampMap.set(rb, 1);
+  }
   props.computeDispatchReady = true;
   props.iterationCount++;
+  props.frameParity = (props.frameParity ?? 0) ^ 1;
   if (props.trailMesh) updateTrailGeometry(props, now);
 };
 var _tmpQ1 = new THREE3.Quaternion();
 var _tmpV1 = new THREE3.Vector3();
+var _tmpV2 = new THREE3.Vector3();
+var _tmpM1 = new THREE3.Matrix4();
 var catmullRom = (out, outIdx, p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z, t) => {
   const t2 = t * t;
   const t3 = t2 * t;

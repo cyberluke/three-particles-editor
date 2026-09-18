@@ -613,8 +613,11 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
   const isNativeWebGPU = isWebGPUBackend();
   const requestedBackend =
     (activeConfig.simulationBackend as 'AUTO' | 'CPU' | 'GPU' | undefined) ?? 'AUTO';
-  const useGPUCompute =
-    isNativeWebGPU && (requestedBackend === 'GPU' || requestedBackend === 'AUTO');
+  // 4.0.0 is a GPU-only build: on a native WebGPU backend every preference
+  // ('AUTO' | 'CPU' | 'GPU') runs the compute kernels; the WebGL2 fallback has
+  // no compute path and is reported as such by `isWebGPUBackend()`.
+  const useGPUCompute = isNativeWebGPU;
+  void requestedBackend;
 
   // Apply to the converted copy so the editor-side config stays unchanged for
   // serialization and for lil-gui references.
