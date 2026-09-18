@@ -382,12 +382,75 @@ function debugSnapshot(tag, ctx) {
     maxParticles: ctx.cfg.maxParticles,
     instanceCount: n,
     material: m?.type,
-    computeNodeCount: ctx.system.computePipeline?.computeNodes?.length ?? (ctx.system.computeNode ? 1 : 0),
+    // ParticleSystem exposes computeNode (a [emitNode, simNode] array in the
+    // GPU-only engine); the old computePipeline lookup never resolved.
+    computeNodeCount: Array.isArray(ctx.system.computeNode)
+      ? ctx.system.computeNode.length
+      : (ctx.system.computeNode ? 1 : 0),
     map: m?.uniforms?.map?.value?.image ? "loaded" : (m?.uniforms?.map?.value ? "in-flight" : "none"),
     canvas: [ctx.renderer.domElement.width | 0, ctx.renderer.domElement.height | 0]
   });
 }
 setTimeout(() => {
   for (const [id, ctx] of cards.entries()) debugSnapshot('init', ctx);
+// ??? One-shot GPU state probe (manual only, no automatic per-frame read-back) ???
+// Reads a handful of bytes through r186 getArrayBufferAsync(attribute, target,
+// byteOffset, byteCount) - offset and count are BYTES (multiples of 4).
+window.__probeGPU = async (id = activeId) => {
+  const ctx = (exp.id && id === exp.id)
+    ? { renderer: exp.renderer, system: exp.system }
+    : cards.get(id);
+  const dbg = ctx && ctx.system && ctx.system.gpuDebug;
+  if (!dbg) { console.warn('[probe] no gpuDebug for', id); return null; }
+  const maxParticles = dbg.maxParticles;
+  const out = {
+    id,
+    maxParticles,
+    allocatorCount: dbg.allocatorCount,
+    freeCount: null,
+    activeCount: null,
+    lastEmitCount: dbg.lastEmitCount(),
+    emitNodeCount: (dbg.emitNode && dbg.emitNode.count) ?? null,
+    computeNodeCount: Array.isArray(ctx.system.computeNode)
+      ? ctx.system.computeNode.length
+      : (ctx.system.computeNode ? 1 : 0),
+    sampleWindow: null,
+    firstActive: null,
+    activeInSample: 0,
+  };
+  const allocAB = await ctx.renderer.getArrayBufferAsync(dbg.buffers.allocator, null, 0, 4);
+  out.freeCount = new Uint32Array(allocAB)[0];
+  out.activeCount = maxParticles - out.freeCount;
+  // Allocator pops from the high end, so the last 64 slots hold the newest ids.
+  const sampleCount = 64;
+  const firstSlot = maxParticles - sampleCount;
+  const byteOffset = firstSlot * 16;
+  const byteCount = sampleCount * 16;
+  out.sampleWindow = [firstSlot, maxParticles - 1];
+  const read = async (key) => new Float32Array(
+    await ctx.renderer.getArrayBufferAsync(dbg.buffers[key], null, byteOffset, byteCount)
+  );
+  const pos = await read('position');
+  const col = await read('color');
+  const stt = await read('particleState');
+  const orb = await read('orbitalIsActive');
+  for (let s = 0; s < sampleCount; s++) {
+    const o = s * 4;
+    if (col[o + 3] > 0 || orb[o + 3] > 0.5) {
+      out.activeInSample++;
+      if (out.firstActive === null) {
+        out.firstActive = {
+          absoluteSlotIndex: firstSlot + s,
+          position: [pos[o], pos[o + 1], pos[o + 2], pos[o + 3]],
+          color: [col[o], col[o + 1], col[o + 2], col[o + 3]],
+          particleState: [stt[o], stt[o + 1], stt[o + 2], stt[o + 3]],
+          orbitalIsActive: [orb[o], orb[o + 1], orb[o + 2], orb[o + 3]],
+        };
+      }
+    }
+  }
+  console.log('[GPU PROBE]', out);
+  return out;
+};
   console.log(`grid cards: ${grid.children.length}`);
 }, 0);

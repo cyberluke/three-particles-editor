@@ -1122,7 +1122,22 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
      * available through an explicit (throttled) `getArrayBufferAsync` read-back.
      */
     getActiveParticleCount: () => -1,
-    computeNode: pipeline.computeNodes ?? pipeline.computeNode
+    computeNode: pipeline.computeNodes ?? pipeline.computeNode,
+    /**
+         * ?? Temporary one-shot GPU debug handle (deprecated, no per-frame cost) ????
+         * getActiveParticleCount() stays -1; this object is the raw material for an
+         * explicit 
+    enderer.getArrayBufferAsync(...) read-back (bytes, multiples of 4).
+         * lastEmitCount() mirrors uEmitCount, the u32 count written per frame.
+         */
+    gpuDebug: {
+      maxParticles,
+      allocatorCount: pipeline.allocatorCount,
+      buffers: pipeline.buffers,
+      emitNode: pipeline.computeNodes[0],
+      simNode: pipeline.computeNodes[1],
+      lastEmitCount: () => pipeline.uniforms.emitCount.value
+    }
   };
 };
 var _lastUploadStampMap = /* @__PURE__ */ new WeakMap();
@@ -1221,7 +1236,7 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   u.deltaMs.value = delta * 1e3;
   u.gravityVelocity.value.copy(gv);
   u.emitCount.value = emitCount;
-  pipeline.emitNode.count = emitCount;
+  pipeline.emitNode.count = Math.max(1, emitCount);
   u.seed.value = now * 1e-3;
   const n = generalData.noise;
   if (u.noiseStrength) u.noiseStrength.value = n.strength;
