@@ -939,15 +939,21 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
   let geometry;
   if (useInstancing) {
     const g = new THREE3.InstancedBufferGeometry();
-    const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
-    const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
-    g.setAttribute("position", new THREE3.BufferAttribute(quad, 3));
-    g.setIndex(new THREE3.BufferAttribute(idx, 1));
+    const meshGeometry = normalizedConfig.renderer.mesh?.geometry;
+    const baseGeometry = rrType === "MESH" /* MESH */ && meshGeometry ? meshGeometry : new THREE3.BufferGeometry();
+    if (rrType !== "MESH" /* MESH */ || !meshGeometry) {
+      const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
+      const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
+      baseGeometry.setAttribute("position", new THREE3.BufferAttribute(quad, 3));
+      baseGeometry.setIndex(new THREE3.BufferAttribute(idx, 1));
+    }
+    g.setAttribute("position", baseGeometry.getAttribute("position"));
+    if (baseGeometry.index !== null) g.setIndex(baseGeometry.index);
     g.instanceCount = maxParticles;
-    g.setAttribute("aPosition", buffers.position);
-    g.setAttribute("color", buffers.color);
-    g.setAttribute("particleState", buffers.particleState);
-    g.setAttribute("startValues", buffers.startValues);
+    g.setAttribute("instanceOffset", buffers.position);
+    g.setAttribute("instanceColor", buffers.color);
+    g.setAttribute("instanceParticleState", buffers.particleState);
+    g.setAttribute("instanceStartValues", buffers.startValues);
     geometry = g;
   } else {
     const g = new THREE3.BufferGeometry();
