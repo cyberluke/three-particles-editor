@@ -1,6 +1,6 @@
-import Easing from './easing-functions.js';
-import * as THREE3 from './three.module.js';
-import { ObjectUtils } from './three-utils/index.js';
+import Easing from './easing-functions.js?v=5';
+import * as THREE3 from './three.module.js?v=5';
+import { ObjectUtils } from './three-utils/index.js?v=5';
 
 // src/js/effects/three-particles/version.ts
 var REVISION = "4.0.0" ;

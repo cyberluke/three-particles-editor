@@ -1,8 +1,8 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, uniform, normalize, cameraPosition, cameraViewMatrix, mix, storage, buffer, instanceIndex, atomicSub, uint, atomicLoad, rand, sqrt, compute, atomicAdd, atomicStore, Loop, Continue, fract } from './three.tsl.js';
-import * as THREE from './three.module.js';
-import { DoubleSide, Vector3, DataTexture } from './three.module.js';
-import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js';
+import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, uniform, normalize, cameraPosition, cameraViewMatrix, mix, storage, buffer, instanceIndex, atomicSub, uint, atomicLoad, rand, sqrt, compute, atomicAdd, atomicStore, Loop, Continue, fract } from './three.tsl.js?v=5';
+import * as THREE from './three.module.js?v=5';
+import { DoubleSide, Vector3, DataTexture } from './three.module.js?v=5';
+import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js?v=5';
 
 // src/webgpu.ts
 var PLANE_STRIDE = 12;
