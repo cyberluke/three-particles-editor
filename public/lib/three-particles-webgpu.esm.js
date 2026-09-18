@@ -1,5 +1,5 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, min, float, max, floor, round, mod, vec2, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, vec4, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, dot, vec3, uniform, normalize, cameraPosition, cameraViewMatrix, mix, abs, int, storage, buffer, atomicSub, uint, atomicLoad, instanceIndex, rand, sqrt, compute, atomicAdd, atomicStore, Loop, Continue, fract } from './three.tsl.js';
+import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, cos, sin, Discard, normalLocal, cameraProjectionMatrix, uv, uniform, normalize, cameraPosition, cameraViewMatrix, mix, int, storage, buffer, atomicSub, uint, atomicLoad, instanceIndex, rand, sqrt, compute, atomicAdd, atomicStore, Loop, Continue, fract } from './three.tsl.js';
 import * as THREE from './three.module.js';
 import { DoubleSide, Vector3, DataTexture } from './three.module.js';
 import { PointsNodeMaterial, MeshBasicNodeMaterial, StorageBufferAttribute, StorageInstancedBufferAttribute } from './three.webgpu.js';
@@ -461,6 +461,92 @@ function bakeParticleSystemCurves(normalizedConfig, particleSystemId) {
     orbitalVelZ: orbitalVelZIdx
   };
 }
+var permute = Fn(({ x }) => {
+  return mod(x.mul(34).add(10).mul(x), float(289));
+});
+var taylorInvSqrt = Fn(({ r }) => {
+  return float(1.79284291400159).sub(float(0.85373472095314).mul(r));
+});
+var snoise3D = Fn(
+  ({ v }) => {
+    const ONE_THIRD = float(1 / 3);
+    const ONE_SIXTH = float(1 / 6);
+    const i = floor(
+      v.add(dot(v, vec3(ONE_THIRD, ONE_THIRD, ONE_THIRD)))
+    ).toVar();
+    const x0 = v.sub(i).add(dot(i, vec3(ONE_SIXTH, ONE_SIXTH, ONE_SIXTH))).toVar();
+    const g = step(x0.yzx, x0.xyz).toVar();
+    const l = float(1).sub(g).toVar();
+    const i1 = min(g.xyz, l.zxy).toVar();
+    const i2 = max(g.xyz, l.zxy).toVar();
+    const x1 = x0.sub(i1).add(ONE_SIXTH).toVar();
+    const x2 = x0.sub(i2).add(ONE_SIXTH.mul(2)).toVar();
+    const x3 = x0.sub(float(1)).add(ONE_SIXTH.mul(3)).toVar();
+    const iw = mod(i, float(289)).toVar();
+    const p0_yz = permute({
+      x: permute({
+        x: vec4(
+          vec2(iw.z, iw.z.add(i1.z)),
+          vec2(iw.z.add(i2.z), iw.z.add(1))
+        )
+      }).add(
+        vec4(vec2(iw.y, iw.y.add(i1.y)), vec2(iw.y.add(i2.y), iw.y.add(1)))
+      )
+    });
+    const p = permute({
+      x: p0_yz.add(
+        vec4(vec2(iw.x, iw.x.add(i1.x)), vec2(iw.x.add(i2.x), iw.x.add(1)))
+      )
+    });
+    const n_ = float(0.142857142857142);
+    const j = p.sub(float(49).mul(floor(p.mul(n_).mul(n_)))).toVar();
+    const x_ = floor(j.mul(n_)).toVar();
+    const y_ = floor(j.sub(float(7).mul(x_))).toVar();
+    const NS_X = float(0.285714285714286);
+    const NS_Y = float(-0.928571428571429);
+    const gx = x_.mul(NS_X).add(NS_Y);
+    const gy = y_.mul(NS_X).add(NS_Y);
+    const gz = float(1).sub(abs(gx)).sub(abs(gy)).toVar();
+    const gz_neg = step(gz, vec4(0));
+    const ox = gz_neg.mul(floor(gx).add(0.5));
+    const oy = gz_neg.mul(floor(gy).add(0.5));
+    const gx_final = gx.sub(ox);
+    const gy_final = gy.sub(oy);
+    const g0 = vec3(gx_final.x, gy_final.x, gz.x).toVar();
+    const g1 = vec3(gx_final.y, gy_final.y, gz.y).toVar();
+    const g2 = vec3(gx_final.z, gy_final.z, gz.z).toVar();
+    const g3 = vec3(gx_final.w, gy_final.w, gz.w).toVar();
+    const norm = taylorInvSqrt({
+      r: vec4(vec2(dot(g0, g0), dot(g1, g1)), vec2(dot(g2, g2), dot(g3, g3)))
+    });
+    g0.assign(g0.mul(norm.x));
+    g1.assign(g1.mul(norm.y));
+    g2.assign(g2.mul(norm.z));
+    g3.assign(g3.mul(norm.w));
+    const m = max(
+      vec4(
+        vec2(float(0.5).sub(dot(x0, x0)), float(0.5).sub(dot(x1, x1))),
+        vec2(float(0.5).sub(dot(x2, x2)), float(0.5).sub(dot(x3, x3)))
+      ),
+      float(0)
+    ).toVar();
+    const m2 = m.mul(m).toVar();
+    const m4 = m2.mul(m2).toVar();
+    const gdot = vec4(
+      vec2(dot(g0, x0), dot(g1, x1)),
+      vec2(dot(g2, x2), dot(g3, x3))
+    );
+    return float(42).mul(dot(m4, gdot));
+  }
+);
+Fn(
+  ({ t }) => {
+    const noiseX = snoise3D({ v: vec3(t, float(0), float(0)) });
+    const noiseY = snoise3D({ v: vec3(t, t, float(0)) });
+    const noiseZ = snoise3D({ v: vec3(t, t, t) });
+    return vec3(noiseX, noiseY, noiseZ);
+  }
+);
 
 // src/js/effects/three-particles/color-utils.ts
 var sRGBToLinear = (c) => c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
@@ -692,9 +778,9 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
         }
         if (flags.colorOverLifetime) {
           const col = sCol.element(i).toVar();
-          const cr = lookupCurve({ curveIndex: float(curveMap.colorOverLifetimeR), t: lifePct }).mix(col.x, lifePct);
-          const cg = lookupCurve({ curveIndex: float(curveMap.colorOverLifetimeG), t: lifePct }).mix(col.y, lifePct);
-          const cb = lookupCurve({ curveIndex: float(curveMap.colorOverLifetimeB), t: lifePct }).mix(col.z, lifePct);
+          const cr = lookupCurve({ curveIndex: float(curveMap.colorR), t: lifePct }).mix(col.x, lifePct);
+          const cg = lookupCurve({ curveIndex: float(curveMap.colorG), t: lifePct }).mix(col.y, lifePct);
+          const cb = lookupCurve({ curveIndex: float(curveMap.colorB), t: lifePct }).mix(col.z, lifePct);
           col.assign(vec4(cr, cg, cb, col.w));
           sCol.element(i).assign(col);
         }
@@ -705,9 +791,20 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           const freq = uNoiseFrequency;
           const p3 = pos.mul(freq);
           const seed = ex.w;
-          const nx = fbm3(p3.x, p3.y, p3.z, seed);
-          const ny = fbm3(p3.y + float(31.41), p3.z - float(17.53), p3.x + float(23.07), seed);
-          const nz = fbm3(p3.z - float(51.07), p3.x + float(13.11), p3.y + float(41.79), seed);
+          const noiseSample = (x, y, z, offset) => snoise3D({ v: vec3(x.add(offset), y.add(offset), z.add(offset)) });
+          const nx = noiseSample(p3.x, p3.y, p3.z, seed);
+          const ny = noiseSample(
+            p3.y.add(float(31.41)),
+            p3.z.sub(float(17.53)),
+            p3.x.add(float(23.07)),
+            seed
+          );
+          const nz = noiseSample(
+            p3.z.sub(float(51.07)),
+            p3.x.add(float(13.11)),
+            p3.y.add(float(41.79)),
+            seed
+          );
           const noiseVec = vec3(nx, ny, nz).mul(uNoisePower);
           If(uNoisePosAmount.greaterThan(float(1e-3)), () => {
             pos.assign(pos.add(noiseVec.mul(uNoisePosAmount)));
@@ -761,72 +858,11 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   };
 }
 function select01(kind, cone, sphere, planeVal) {
-  const isCone = floor(kind).equal(float(0));
-  const isSph = floor(kind).equal(float(1));
-  const tmp = mix(cone, sphere, 0);
-  isCone.toVar();
-  const r = mix(planeVal, tmp, abs(isCone.sub(float(1))).min(abs(isSph.sub(float(1)))));
-  return r;
-}
-function simplex3(xa, ya, za) {
-  const x = float(xa).toVar();
-  const y = float(ya).toVar();
-  const z = float(za).toVar();
-  const F = float(1).div(float(3));
-  const G = float(1).div(float(6));
-  const s = x.add(y).add(z).mul(F);
-  const i = floor(x.add(s));
-  const j = floor(y.add(s));
-  const k = floor(z.add(s));
-  const t = i.add(j).add(k).mul(G);
-  const X0 = i.sub(t);
-  const Y0 = j.sub(t);
-  const Z0 = k.sub(t);
-  const x0 = x.sub(X0);
-  const y0 = y.sub(Y0);
-  const z0 = z.sub(Z0);
-  const sel1a = x0.greaterThan(y0).toVar();
-  const sel1b = y0.greaterThan(z0).toVar();
-  let i1;
-  let j1;
-  let k1;
-  i1 = sel1a.greaterThan(float(0.5)).mul(float(1)).add(sel1a.lessThan(float(0.5)).sel(float(0), float(0)));
-  i1 = If(i1.greaterThan(float(0.5)), () => i1).sel(i1, float(0));
-  j1 = sel1b.greaterThan(float(0.5)).sel(float(1), float(0));
-  k1 = float(1).sub(i1).sub(j1);
-  const x1 = x0.sub(i1).add(float(1).div(float(3)));
-  const y1 = y0.sub(j1).add(float(1).div(float(3)));
-  const z1 = z0.sub(k1).add(float(1).div(float(3)));
-  const x2 = x0.sub(float(2).div(float(3))).add(i1.mul(float(2).div(float(3))));
-  const y2 = y0.sub(float(2).div(float(3))).add(j1.mul(float(2).div(float(3))));
-  const z2 = z0.sub(float(2).div(float(3))).add(k1.mul(float(2).div(float(3))));
-  const x3 = x0.sub(float(1)).add(float(1));
-  const y3 = y0.sub(float(1)).add(float(1));
-  const z3 = z0.sub(float(1)).add(float(1));
-  const n = (px, py, pz) => px.mul(px).add(py.mul(py)).add(pz.mul(pz));
-  const nn0 = max(float(0.6).sub(n(x0, y0, z0)), float(0));
-  const nn1 = max(float(0.6).sub(n(x1, y1, z1)), float(0));
-  const nn2 = max(float(0.6).sub(n(x2, y2, z2)), float(0));
-  const nn3 = max(float(0.6).sub(n(x3, y3, z3)), float(0));
-  const g = (xx, yy, zz, gx, gy, gz) => xx.mul(gx).add(yy.mul(gy)).add(zz.mul(gz)).mul(max(nn0, nn1).mul(max(nn2, nn3)));
-  const v = g(x0, y0, z0, 1, 0, 0).add(g(x1, y1, z1, -1, 1, 0)).add(g(x2, y2, z2, 0, -1, 1)).add(g(x3, y3, z3, 0, -1, 1));
-  return v.mul(float(2));
-}
-function fbm3(x0, y0, z0, offset) {
-  const nx = x0.add(offset);
-  const ny = y0.add(offset);
-  const nz = z0.add(offset);
-  const freq = float(0).toVar();
-  const amp = float(0).toVar();
-  const v = float(0).toVar();
-  float(2);
-  const ampDec = float(0.5);
-  const f1 = float(1);
-  freq.add(f1);
-  amp.add(ampDec);
-  const n1 = simplex3(nx.mul(f1), ny.mul(f1), nz.mul(f1));
-  v.assign(v.add(n1.mul(ampDec)));
-  return v;
+  const k = floor(kind);
+  return k.equal(float(0)).select(
+    cone,
+    k.equal(float(1)).select(sphere, planeVal)
+  );
 }
 
 // src/js/effects/three-particles/three-particles-constants.ts
