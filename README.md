@@ -4,55 +4,47 @@ The best-in-class particle framework for Three.js — now with a WebGPU compute 
 
 Why it stands out:
 
-- **WebGPU compute** — gravity, velocity, 7 lifetime modifiers, point/directional force fields and 3D simplex noise run in GPU compute kernels (Three.js TSL): 50K–350K+ textured particles at full framerate, one draw call.
-- **Four renderers** — POINTS billboard quads, GPU-INSTANCED sprites (no `gl_PointSize` limit), TRAIL ribbons with width/opacity/color tapering, MESH particles (debris, gems, coins) with full 3D rotation and lighting.
-- **Unity-familiar workflow** — bursts, sub-emitters, collision planes (kill/clamp/bounce), Bézier over-lifetime curves, serialization; every example ships as a copy-paste config.
-- **Deterministic** — a CPU reference path keeps identical results for tests and headless pipelines.
+- **WebGPU compute** — gravity, velocity, 7 lifetime modifiers, point/directional force fields + collision planes and 3D simplex noise run in Three.js TSL compute kernels: 50K–350K+ textured particles at full framerate, one draw call. (The CPU path used to be the bottleneck for real 350K+ counts — the whole simulation was reworked around compute; emission, sub-emitters and `updateConfig()` remain CPU, the TRAIL renderer always simulates on CPU.)
+- **Four renderer types in the exported config** — `POINTS` billboard quads, `INSTANCED` sprites (no `gl_PointSize` limit), `TRAIL` ribbons with width/opacity/color tapering, `MESH` debris/gems/coins with full 3D rotation and lighting.
+- **Unity-familiar workflow** — bursts, sub-emitters, collision planes (kill/clamp/bounce), Bézier over-lifetime curves baked to 256-sample lookups; every example ships as a copy-paste config.
+- **Pinned versions** — three.js r186 (`"three": "^0.186.0"`), svelte 5 editor. With this engine we do not recommend react-three-fiber for now: react 19.3 is breaking it upstream ([react-three-fiber#3915](https://github.com/pmndrs/react-three-fiber/issues/3915)) — use three.js r186+ directly.
+- **Offline gallery** — all example modules, three.js builds and textures are mirrored as static files, so the whole page works without a network.
 
 Author: **CyberLuke** — the single maintained line since v4.
 
-## Live Demo
-
-[https://newkrok.com/three-particles-editor/index.html](https://newkrok.com/three-particles-editor/index.html)
-
 ## Installation
 
+From npm (both are public):
+
 ```bash
-# Clone the repository
-git clone https://github.com/NewKrok/three-particles-editor.git
-
-# Navigate to the project directory
-cd three-particles-editor
-
-# Install dependencies
-npm install
-
-# Start the development server
-npm run dev
+npm install @cyberluke/three-particles
+npm install @cyberluke/three-particles-editor
 ```
 
-## Development
+The engine package ships `dist/index.js` + `dist/webgpu.js` ESM entries and `dist/three-particles.min.js`. No separate CDN bundle exists; use the ESM files with an import map or your bundler.
 
-- `npm run dev` - Start the development server with hot reloading
-- `npm run build` - Build the project for production
-- `npm run start` - Serve the production build
-- `npm run lint` - Run ESLint to check code quality
-- `npm run format` - Format code with Prettier
+From a clone of this repo (workspace layout: editor at the root, engine in `packages/three-particles`):
+
+```bash
+npm install               # installs both workspaces
+npm run dev               # engine tsup + mirror sync + rollup -w
+npm start                 # serve ./public on 127.0.0.1:5173
+```
+
+## Editor scripts
+
+- `npm run build` — `engine:build` (tsup) → `mirror` (sync `public/lib/` copies) → `build:editor` (themes + rollup)
+- `npm run dev` / `npm run start` — dev server / static server
+- `npm run lint` / `npm run format` — lint + prettier
 
 ## Features
 
 - Visual editor for creating and fine-tuning particle effects
-- Real-time preview of particle systems
+- Real-time preview of particle systems (WebGPU-backed via the engine's compute path)
 - Export configurations for use with the @cyberluke/three-particles library
 - Customizable particle properties (position, velocity, size, color, alpha, rotation, etc.)
 - Support for various emitter shapes and parameters
-
-## Videos
-
-- [Unity asset store](https://youtu.be/fdtoft1AXBk)
-- [In action](https://youtu.be/5IUqO5P-T6Q)
-- [Projectiles](https://youtu.be/Q352JuxON04)
-- [First preview](https://youtu.be/dtN_bndvoGU)
+- Offline example gallery — same code as the live page, mirrored assets, no external requests
 
 ## Screenshots
 
