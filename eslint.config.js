@@ -11,12 +11,18 @@ export default [
 
   // Global ignores
   {
-    ignores: ['public/build/**', 'node_modules/**', 'dist/**'],
+    ignores: [
+      'public/build/**',
+      'node_modules/**',
+      'dist/**',
+      // Generated engine mirrors (tsup output + minified bundle), verified via scripts/gate-*.mjs
+      'public/lib/**',
+    ],
   },
 
   // JavaScript and TypeScript files
   {
-    files: ['**/*.js', '**/*.ts'],
+    files: ['**/*.js', '**/*.mjs', '**/*.ts'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',

@@ -1,6 +1,15 @@
 # THREE Particles Editor
 
-Particle system editor for ThreeJS in the style of Unity. This editor allows you to create, customize, and export particle effects for use with the [@cyberluke/three-particles](https://github.com/NewKrok/three-particles) library.
+The best-in-class particle framework for Three.js — now with a WebGPU compute simulation. This is the Unity-style visual editor and offline example gallery that goes with it: tune effects live, then export ready-to-paste configs for the [@cyberluke/three-particles](https://github.com/cyberluke/three-particles) library.
+
+Why it stands out:
+
+- **WebGPU compute** — gravity, velocity, 7 lifetime modifiers, point/directional force fields and 3D simplex noise run in GPU compute kernels (Three.js TSL): 50K–350K+ textured particles at full framerate, one draw call.
+- **Four renderers** — POINTS billboard quads, GPU-INSTANCED sprites (no `gl_PointSize` limit), TRAIL ribbons with width/opacity/color tapering, MESH particles (debris, gems, coins) with full 3D rotation and lighting.
+- **Unity-familiar workflow** — bursts, sub-emitters, collision planes (kill/clamp/bounce), Bézier over-lifetime curves, serialization; every example ships as a copy-paste config.
+- **Deterministic** — a CPU reference path keeps identical results for tests and headless pipelines.
+
+Author: **CyberLuke** — the single maintained line since v4.
 
 ## Live Demo
 
