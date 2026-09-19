@@ -13,7 +13,7 @@ import {
   updateParticleSystems,
 } from '@cyberluke/three-particles';
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
-import { examples } from './lib/examples-data.js?v=8';
+import { examples } from './lib/examples-data.js?v=9';
 
 /** Rescue-mode debug switch (drop to false once parity is signed off). */
 const PARTICLE_DEBUG = true;
@@ -93,8 +93,11 @@ function prepareConfig(cfg0, textureId, meshType) {
   delete cfg._editorData;
   if (!cfg.renderer) cfg.renderer = {};
   cfg.simulationBackend = 'GPU';
+  // No harness coercion: `rendererType` stays as requested. The engine's
+  // `resolveWebGPUEffectiveRendererType()` is the canonical 4->4 mapping
+  // (requested POINTS = effective POINTS billboard quad + THREE.Points).
   const rt = cfg.renderer.rendererType;
-  if (!rt || rt === 'POINTS') cfg.renderer.rendererType = 'INSTANCED';
+  if (!rt) cfg.renderer.rendererType = 'POINTS';
   if (cfg.renderer.blending) cfg.renderer.blending = resolveBlending(cfg.renderer.blending);
   const tex = loadTexture(textureId);
   if (tex) cfg.map = tex;
@@ -115,9 +118,9 @@ function prepareConfig(cfg0, textureId, meshType) {
 }
 
 // ─── Staged birth diagnosis (debug-harness only; configs cloned, not mutated)
-// 0 BIRTH_ONLY | 1 +INTEGRATION | 2 +FORCE_FIELDS | 3 +ORBITAL | 4 +NOISE
+// 0 BIRTH_ONLY | 1 +INTEGRATION | 2 +FORCE_FIELDS | 3 +ORBIAL | 4 +NOISE
 // | 5 +LIFETIME_VISUALS (full config).
-const STAGES = ['0:BIRTH_ONLY', '1:+INTEGRATION', '2:+FORCE_FIELDS', '3:+ORBITAL', '4:+NOISE', '5:+LIFETIME_VISUALS'];
+const STAGES = ['0:BIRTH_ONLY', '1:+INTEGRATION', '2:+FORCE_FIELDS', '3:+ORBIAL', '4:+NOISE', '5:+LIFETIME_VISUALS'];
 function applyStage(cfg, stage) {
   const v = cfg.velocityOverLifetime || {};
   if (stage >= 1) v.isActive = true; else v.isActive = false;
@@ -300,7 +303,7 @@ function updateProgressLine(ctx, p) {
     p.anisotropy > 10 ? `ANISOTROPY ${p.anisotropy}x`
     : `σ ${p.position.stdXYZ[0]}/${p.position.stdXYZ[1]}/${p.position.stdXYZ[2]}`;
   st.textContent =
-    `GPU emit/sim ✓ | active ${p.activeInSample}/${p.sampleSlots} (births ${p.birthsTotal}) | ` +
+    `GPU emit/sim ✓ | sampleActive ${p.activeInSample}/${p.sampleSlots} (births ${p.birthsTotal}) | ` +
     `shape ${shape} | ${anisoTxt} | tex ${texOk}`;
 }
 
@@ -340,6 +343,8 @@ async function makeCtx(id, entry, stage = 5) {
   scene.add(system.instance);
   const snap = system.gpuDebug?.snapshot ? system.gpuDebug.snapshot() : null;
   console.log(`[PS:create] card #${id}`, {
+    effectiveRenderer: snap?.effectiveRendererType ?? null,
+    requestedRendererType: snap?.requestedRendererType ?? merged.renderer?.rendererType ?? 'POINTS',
     rendererType: snap?.rendererType ?? merged.renderer?.rendererType,
     simulationSpace: snap?.simulationSpace ?? merged.simulationSpace,
     maxParticles: snap?.maxParticles ?? merged.maxParticles,
@@ -359,6 +364,23 @@ async function makeCtx(id, entry, stage = 5) {
     lastBucket: '',
     failed: false, pipelineHealthy: false, fatalError: null,
   };
+  // ?? one-shot fatal state (same rule as the editor) ??
+  ctx.markFatal = (e) => {
+    if (ctx.failed) return; // already failed once (no error spam)
+    ctx.failed = true;
+    ctx.fatalError = String((e && e.message) || e);
+    console.error(`[PS:fatal] ${id}`, ctx.fatalError);
+    const st = document.getElementById('stats-' + id);
+    if (st) st.textContent = 'FATAL: ' + ctx.fatalError;
+  };
+  // Device-level async GPU errors (180: `backend.device` after init()).
+  const gpuDevice = renderer.backend && (renderer.backend.device || renderer.backend._device);
+  if (gpuDevice && typeof gpuDevice.addEventListener === 'function') {
+    gpuDevice.addEventListener('uncapturederror', (ev) => {
+      const msg = (ev && ev.error && ev.error.message) || 'unknown uncaptured WebGPU error';
+      ctx.markFatal(new Error(`WebGPU uncaptured error: ${msg}`));
+    });
+  }
   cards.set(id, ctx);
   return ctx;
 }
@@ -383,13 +405,7 @@ async function playCard(id) {
   ctx.clock.getDelta();
   ctx.milestoneIdx = 0;
   document.querySelectorAll('.card').forEach((c) => c.classList.toggle('active', c.dataset.name === id));
-  const markFatal = (e) => {
-    ctx.failed = true;
-    ctx.fatalError = String((e && e.message) || e);
-    console.error(`[PS:fatal] ${id}`, ctx.fatalError);
-    const st = document.getElementById('stats-' + id);
-    if (st) st.textContent = 'FATAL: ' + ctx.fatalError;
-  };
+  const markFatal = (e) => ctx.markFatal(e);
   const step = async () => {
     if (activeId !== id || ctx.failed) return;
     const d = ctx.clock.getDelta();
@@ -400,7 +416,6 @@ async function playCard(id) {
       try {
         updateParticleSystems({ now: Date.now(), delta: d, elapsed: ctx.elapsed });
         if (ctx.system.computeNode) await ctx.renderer.compute(ctx.system.computeNode);
-        ctx.pipelineHealthy = true;
       } catch (e) {
         markFatal(e);
         return;
@@ -408,6 +423,9 @@ async function playCard(id) {
     }
     try {
       ctx.renderer.render(ctx.scene, ctx.camera);
+      // §14: probes start only after the first fully successful frame
+      // (compute completion + render of that same frame).
+      ctx.pipelineHealthy = true;
     } catch (e) {
       markFatal(e);
       return;
@@ -470,6 +488,19 @@ async function openExpand(id) {
     await exp.renderer.init();
     exp.renderer.outputColorSpace = THREE.SRGBColorSpace;
     if (!enableWebGPU(exp.renderer)) throw new Error('examples.html requires a native WebGPU compute backend');
+    // Device-level async GPU errors -> one-shot fatal for the expand modal.
+    const dev = exp.renderer.backend && (exp.renderer.backend.device || exp.renderer.backend._device);
+    if (dev && typeof dev.addEventListener === 'function') {
+      dev.addEventListener('uncapturederror', (ev) => {
+        if (exp.failed) return;
+        const msg = (ev && ev.error && ev.error.message) || 'unknown uncaptured WebGPU error';
+        exp.failed = true;
+        exp.fatalError = 'WebGPU uncaptured error: ' + msg;
+        console.error('[PS:fatal] expand device', exp.fatalError);
+        const fe = document.getElementById('expand-fps');
+        if (fe) fe.textContent = 'FATAL: ' + exp.fatalError;
+      });
+    }
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
     const pl = new THREE.Mesh(
@@ -491,8 +522,11 @@ async function openExpand(id) {
   exp.scene.add(exp.system.instance);
   exp.clock = makeClock(); exp.elapsed = 0; exp.cfg = cfg; exp.milestoneIdx = 0;
   exp.ctxLike = { id: id, renderer: exp.renderer, system: exp.system, get elapsed() { return exp.elapsed; }, get failed() { return exp.failed; }, get pipelineHealthy() { return exp.pipelineHealthy; } };
-  document.getElementById('expand-renderer-label').textContent = cfg.renderer.rendererType;
-  document.getElementById('expand-backend-label').textContent = 'GPU';
+  const sysSnap = exp.system.gpuDebug?.snapshot ? exp.system.gpuDebug.snapshot() : null;
+  document.getElementById('expand-renderer-label').textContent =
+    `effective renderer: ${sysSnap?.effectiveRendererType ?? cfg.renderer.rendererType} · requested rendererType: ${sysSnap?.requestedRendererType ?? cfg.renderer.rendererType}`;
+  document.getElementById('expand-backend-label').textContent =
+    'simulation: GPU · material: TSL';
   cancelAnimationFrame(exp.loop);
   const fEl = document.getElementById('expand-fps');
   const tEl = document.getElementById('expand-frametime');
@@ -501,6 +535,7 @@ async function openExpand(id) {
   exp.failed = false;
   exp.pipelineHealthy = false;
   const markExpFatal = (e) => {
+    if (exp.failed) return; // one-shot (no error spam)
     exp.failed = true;
     exp.fatalError = String((e && e.message) || e);
     console.error(`[PS:fatal] expand ${exp.id}`, exp.fatalError);
@@ -519,7 +554,6 @@ async function openExpand(id) {
       try {
         updateParticleSystems({ now: Date.now(), delta: d, elapsed: exp.elapsed });
         if (exp.system.computeNode) await exp.renderer.compute(exp.system.computeNode);
-        exp.pipelineHealthy = true;
       } catch (e) {
         markExpFatal(e);
         return;
@@ -527,6 +561,8 @@ async function openExpand(id) {
     }
     try {
       exp.renderer.render(exp.scene, exp.camera);
+      // §14: probes only after the first fully successful frame.
+      exp.pipelineHealthy = true;
     } catch (e) {
       markExpFatal(e);
       return;

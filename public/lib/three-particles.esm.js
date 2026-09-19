@@ -1,7 +1,7 @@
-import Easing from './easing-functions.js?v=8';
-import * as THREE3 from './three.module.js?v=8';
-import { ObjectUtils } from './three-utils/index.js?v=8';
-import { StorageBufferAttribute } from './three.webgpu.js?v=8';
+import Easing from './easing-functions.js?v=9';
+import * as THREE3 from './three.module.js?v=9';
+import { ObjectUtils } from './three-utils/index.js?v=9';
+import { StorageBufferAttribute } from './three.webgpu.js?v=9';
 
 // src/js/effects/three-particles/version.ts
 var REVISION = "4.0.0" ;
@@ -597,6 +597,19 @@ function resolveSimulationBackend(renderer, preference = "AUTO" /* AUTO */) {
   }
   return gpuCapable ? "GPU" /* GPU */ : "CPU" /* CPU */;
 }
+function resolveWebGPUEffectiveRendererType(requested) {
+  switch (requested) {
+    case "INSTANCED" /* INSTANCED */:
+      return "INSTANCED" /* INSTANCED */;
+    case "TRAIL" /* TRAIL */:
+      return "TRAIL" /* TRAIL */;
+    case "MESH" /* MESH */:
+      return "MESH" /* MESH */;
+    case "POINTS" /* POINTS */:
+    default:
+      return "POINTS" /* POINTS */;
+  }
+}
 var _particleSystemId = 0;
 var createdParticleSystems = [];
 var _tslMaterialFactory = null;
@@ -630,6 +643,78 @@ var _lastWorldPositionSnapshot = new THREE3.Vector3();
 new THREE3.Vector3();
 new THREE3.Vector3();
 new THREE3.Quaternion();
+var assertNamed = (cond, message) => {
+  if (!cond) {
+    throw new Error(`three-particles: ${message}`);
+  }
+};
+var normalizeVector2Value = (raw, fallback, label) => {
+  if (raw === void 0 || raw === null) {
+    return new THREE3.Vector2(fallback[0], fallback[1]);
+  }
+  if (raw instanceof THREE3.Vector2) return raw;
+  let n1;
+  let n2;
+  if (Array.isArray(raw)) {
+    n1 = Number(raw[0]);
+    n2 = Number(raw[1]);
+  } else if (typeof raw === "object") {
+    const o = raw;
+    n1 = o.x !== void 0 ? Number(o.x) : o.u !== void 0 ? Number(o.u) : void 0;
+    n2 = o.y !== void 0 ? Number(o.y) : o.v !== void 0 ? Number(o.v) : void 0;
+  }
+  assertNamed(
+    n1 !== void 0 && n2 !== void 0 && Number.isFinite(n1) && Number.isFinite(n2),
+    `${label} must be one of: Vector2, [x,y], [u,v], {x,y} or {u,v}`
+  );
+  return new THREE3.Vector2(n1, n2);
+};
+var normalizeTextureValue = (raw, label) => {
+  if (raw === void 0 || raw === null) return null;
+  assertNamed(
+    typeof raw === "object" && "image" in raw,
+    `${label} must be null or a texture object with .image (got ${String(raw)})`
+  );
+  return raw;
+};
+var normalizeDepthTextureValue = (raw, label) => {
+  if (raw === void 0 || raw === null) return null;
+  assertNamed(
+    typeof raw === "object" && "image" in raw,
+    `${label} must be a texture object with .image when set (got ${String(raw)})`
+  );
+  return raw;
+};
+var normalizeBackgroundToVector3 = (raw, label) => {
+  if (raw === void 0 || raw === null) return new THREE3.Vector3(1, 1, 1);
+  if (typeof raw === "number") {
+    const c = new THREE3.Color(raw);
+    return new THREE3.Vector3(c.r, c.g, c.b);
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    const c = new THREE3.Color(s.startsWith("#") ? s : `#${s}`);
+    assertNamed(
+      Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b),
+      `${label} is not a valid hex color string`
+    );
+    return new THREE3.Vector3(c.r, c.g, c.b);
+  }
+  if (Array.isArray(raw)) {
+    const [r, g, b] = raw;
+    assertNamed(
+      Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b),
+      `${label} array must contain three finite numbers`
+    );
+    return new THREE3.Vector3(r, g, b);
+  }
+  const o = raw;
+  assertNamed(
+    Number.isFinite(Number(o.r)) && Number.isFinite(Number(o.g)) && Number.isFinite(Number(o.b)),
+    `${label} object must provide finite r/g/b`
+  );
+  return new THREE3.Vector3(Number(o.r), Number(o.g), Number(o.b));
+};
 new THREE3.Vector3();
 new THREE3.Vector3();
 new THREE3.Vector3();
@@ -900,8 +985,12 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     }
     normalizedConfig.simulationBackend = "GPU" /* GPU */;
   }
-  const rrType = normalizedConfig.renderer.rendererType || "POINTS" /* POINTS */;
-  const useInstancing = rrType === "INSTANCED" /* INSTANCED */ || rrType === "MESH" /* MESH */;
+  const requestedRendererType = normalizedConfig.renderer.rendererType || "POINTS" /* POINTS */;
+  const effectiveRendererType = resolveWebGPUEffectiveRendererType(
+    requestedRendererType
+  );
+  const rrType = effectiveRendererType;
+  const useInstancing = effectiveRendererType === "INSTANCED" /* INSTANCED */ || effectiveRendererType === "MESH" /* MESH */;
   const trailConfig = normalizedConfig.renderer.trail;
   const trailLength = Math.max(2, Math.round(trailConfig?.length ?? 20));
   const trailHistoryAttribute = rrType === "TRAIL" /* TRAIL */ ? new StorageBufferAttribute(
@@ -990,7 +1079,11 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     ) : 1;
     const perEvent = Math.min(burstCount, fifo.capacity);
     const childMax = Math.max(2, Math.min(perEvent * fifo.capacity, 65536));
-    const childInstanced = childCfg.renderer?.rendererType === "INSTANCED" /* INSTANCED */ || childCfg.renderer?.rendererType === "MESH" /* MESH */;
+    const childRequestedRendererType = childCfg.renderer?.rendererType;
+    const childEffectiveRendererType = resolveWebGPUEffectiveRendererType(
+      childRequestedRendererType
+    );
+    const childInstanced = childEffectiveRendererType === "INSTANCED" /* INSTANCED */ || childEffectiveRendererType === "MESH" /* MESH */;
     const childPipeline = factory.createComputePipeline(
       childMax,
       childInstanced,
@@ -1025,6 +1118,8 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       pipeline: childPipeline,
       init,
       instanced: childInstanced,
+      requestedRendererType: childRequestedRendererType,
+      effectiveRendererType: childEffectiveRendererType,
       cfg: childCfg,
       object: null,
       perEvent,
@@ -1046,21 +1141,39 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       selfPose: { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, sx: 1, sy: 1, sz: 1, isWorld: childCfg.simulationSpace === "WORLD" /* WORLD */ ? 1 : 0 }
     });
   }
+  const cameraNearFarSource = normalizedConfig.renderer.cameraNearFar;
+  const tilesSource = normalizedConfig.textureSheetAnimation?.tiles;
   const elapsedUniform = { value: 0 };
   const sharedUniforms = {
     elapsed: elapsedUniform,
     viewportHeight: { value: 720 },
-    cameraNearFar: { value: new THREE3.Vector2(0.1, 1e3) },
+    cameraNearFar: {
+      value: normalizeVector2Value(
+        cameraNearFarSource,
+        [0.1, 1e3],
+        "renderer.cameraNearFar"
+      )
+    },
     useInstancing: { value: useInstancing },
     softParticlesEnabled: { value: !!normalizedConfig.renderer.softParticles?.enabled },
     softParticlesIntensity: {
       value: Math.max(normalizedConfig.renderer.softParticles?.intensity ?? 1, 1e-3)
     },
-    sceneDepthTexture: { value: normalizedConfig.renderer.softParticles?.depthTexture ?? null },
+    sceneDepthTexture: {
+      value: normalizeDepthTextureValue(
+        normalizedConfig.renderer.softParticles?.depthTexture,
+        "renderer.softParticles.depthTexture"
+      )
+    },
     discardBackgroundColor: { value: !!normalizedConfig.renderer.discardBackgroundColor },
     backgroundColor: { value: new THREE3.Color(16777215) },
     backgroundColorTolerance: { value: normalizedConfig.renderer.backgroundColorTolerance ?? 0 },
-    map: { value: normalizedConfig.map ?? getDefaultTexture() },
+    map: {
+      value: normalizeTextureValue(
+        normalizedConfig.map ?? getDefaultTexture(),
+        "map"
+      )
+    },
     startLifetime: { value: 0 },
     startSize: { value: 1 },
     startRotation: { value: 0 },
@@ -1074,11 +1187,21 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       value: normalizedConfig.textureSheetAnimation?.timeMode === "FPS" /* FPS */
     },
     tiles: {
-      value: normalizedConfig.textureSheetAnimation?.tiles ?? new THREE3.Vector2(1, 1)
+      // The ONLY normalizer: `tiles` reaches the TSL factory as a Vector2
+      // (also {u,v} pairs are accepted per §10). The engine's own default is
+      // already (1,1) via the merged default config.
+      value: normalizeVector2Value(
+        tilesSource,
+        [1, 1],
+        "textureSheetAnimation.tiles"
+      )
     }
   };
-  const bgCol = normalizedConfig.renderer.backgroundColor;
-  sharedUniforms.backgroundColor.value.setRGB(bgCol.r ?? 1, bgCol.g ?? 1, bgCol.b ?? 1);
+  const bgVec = normalizeBackgroundToVector3(
+    normalizedConfig.renderer.backgroundColor,
+    "renderer.backgroundColor"
+  );
+  sharedUniforms.backgroundColor.value.setRGB(bgVec.x, bgVec.y, bgVec.z);
   const rendererConfig = {
     transparent: !!normalizedConfig.renderer.transparent,
     blending: toBlendingConstant(normalizedConfig.renderer.blending),
@@ -1204,7 +1327,7 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       useInstancing: { value: e.instanced }
     };
     const childMaterial = factory.createTSLParticleMaterial(
-      e.cfg.renderer?.rendererType || "POINTS" /* POINTS */,
+      e.effectiveRendererType,
       childUniforms,
       rendererConfig,
       true
@@ -1423,6 +1546,8 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     material,
     geometry,
     rrType,
+    requestedRendererType,
+    effectiveRendererType: rrType,
     sharedUniforms,
     allComputeNodes: [
       ...pipeline.computeNodes ?? [],
@@ -1451,6 +1576,8 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     frameParity: 0,
     subEntries: subEntries.map((e) => ({
       fifo: { capacity: e.fifo.capacity, windowSize: e.fifo.windowSize },
+      requestedRendererType: e.requestedRendererType,
+      effectiveRendererType: e.effectiveRendererType,
       pipeline: e.pipeline,
       init: e.init,
       gravity: e.gravity,
@@ -1535,6 +1662,8 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     const u = pipeline.uniforms;
     console.log(`[PS:create] system #${generalData.particleSystemId}`, {
       rendererType: rrType,
+      requestedRendererType,
+      effectiveRendererType: rrType,
       simulationSpace: normalizedConfig.simulationSpace,
       maxParticles,
       useInstancing
@@ -1637,6 +1766,11 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     gpuDebug: {
       maxParticles,
       allocatorCount: pipeline.allocatorCount,
+      /** Canonical requested vs effective GPU renderer classes (§2). */
+      requestedRendererType,
+      effectiveRendererType: rrType,
+      /** u32 birth system seed for this pipeline (written ONCE at create). */
+      systemSeed: pipeline.uniforms.seed.value,
       buffers: pipeline.buffers,
       emitNode: pipeline.emitNode,
       simNode: pipeline.simNode,
@@ -1645,6 +1779,15 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       storageBindingCount: _dbgMaxPass,
       passBindingCounts: _dbgPassCounts,
       lastEmitCount: () => pipeline.uniforms.emitCount.value,
+      /**
+       * Per-sub-emitter-child canonical pairs (§2/§21): each child pool's own
+       * requested vs effective renderer class + its events-per-frame.
+       */
+      subEmitters: (subEntries ?? []).map((e) => ({
+        requestedRendererType: e.requestedRendererType ?? null,
+        effectiveRendererType: e.effectiveRendererType,
+        perEvent: e.perEvent
+      })),
       /** Decode summary for the `[PS:config]` / `[PS:pipeline]` logs. */
       snapshot: () => {
         const shp = normalizedConfig.shape;
@@ -1652,6 +1795,9 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
         const tex = normalizedConfig.map;
         return {
           systemId: generalData.particleSystemId,
+          // Canonical effective + original requested renderer classes (§2).
+          effectiveRendererType: rrType,
+          requestedRendererType,
           rendererType: rrType,
           simulationSpace: normalizedConfig.simulationSpace,
           maxParticles,
@@ -1806,7 +1952,6 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   if (pipeline.subBirthEventsNode) {
     pipeline.subBirthEventsNode.count = Math.max(1, emitCount);
   }
-  u.seed.value = now * 1e-3;
   const n = generalData.noise;
   if (u.noiseStrength) u.noiseStrength.value = n.strength;
   if (u.noisePower) u.noisePower.value = n.noisePower;
@@ -1845,7 +1990,6 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
     if (cu.delta) cu.delta.value = delta;
     if (cu.deltaMs) cu.deltaMs.value = delta * 1e3;
     if (cu.nowMs) cu.nowMs.value = now;
-    if (cu.seed) cu.seed.value = now * 1e-3;
     if (cu.gravityVelocity) {
       cu.gravityVelocity.value.set(
         0,
@@ -1862,7 +2006,6 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
       if (cu.noiseSizeAmount) cu.noiseSizeAmount.value = e.noise.sizeAmount;
     }
     if (cu.fifoBase) cu.fifoBase.value = fifoBase;
-    if (e.init.uniforms.seed) e.init.uniforms.seed.value = now * 1e-3;
     if (e.init.uniforms.fifoBase) e.init.uniforms.fifoBase.value = fifoBase;
     let childEmit = 0;
     if (e.rate > 0) {
@@ -2990,6 +3133,6 @@ function deserializeParticleSystem(json) {
   return deserializeConfig(raw);
 }
 
-export { CollisionPlaneMode, CurveFunctionId, EmitFrom, ForceFieldFalloff, ForceFieldType, LifeTimeCurve, REVISION, RendererType, SCALAR_STRIDE, S_COLOR_A, S_COLOR_B, S_COLOR_G, S_COLOR_R, S_IS_ACTIVE, S_LIFETIME, S_ROTATION, S_SIZE, S_START_FRAME, S_START_LIFETIME, Shape, SimulationBackend, SimulationSpace, SubEmitterTrigger, TimeMode, applyModifiers, blendingMap, calculateRandomPositionAndVelocityOnBox, calculateRandomPositionAndVelocityOnCircle, calculateRandomPositionAndVelocityOnCone, calculateRandomPositionAndVelocityOnRectangle, calculateRandomPositionAndVelocityOnSphere, calculateValue, createBezierCurveFunction, createDefaultMeshTexture, createDefaultParticleTexture, createParticleSystem, curveFunctionIdMap, deserializeParticleSystem, getBezierCacheSize, getCurveFunction, getCurveFunctionFromConfig, getDefaultParticleSystemConfig, isComputeCapableRenderer, isLifeTimeCurve, linearToSRGB, registerTSLMaterialFactory, removeBezierCurveFunction, resolveSimulationBackend, rgbSRGBToLinear, sRGBToLinear, serializeParticleSystem, updateParticleSystems };
+export { CollisionPlaneMode, CurveFunctionId, EmitFrom, ForceFieldFalloff, ForceFieldType, LifeTimeCurve, REVISION, RendererType, SCALAR_STRIDE, S_COLOR_A, S_COLOR_B, S_COLOR_G, S_COLOR_R, S_IS_ACTIVE, S_LIFETIME, S_ROTATION, S_SIZE, S_START_FRAME, S_START_LIFETIME, Shape, SimulationBackend, SimulationSpace, SubEmitterTrigger, TimeMode, applyModifiers, assertNamed, blendingMap, calculateRandomPositionAndVelocityOnBox, calculateRandomPositionAndVelocityOnCircle, calculateRandomPositionAndVelocityOnCone, calculateRandomPositionAndVelocityOnRectangle, calculateRandomPositionAndVelocityOnSphere, calculateValue, createBezierCurveFunction, createDefaultMeshTexture, createDefaultParticleTexture, createParticleSystem, curveFunctionIdMap, deserializeParticleSystem, getBezierCacheSize, getCurveFunction, getCurveFunctionFromConfig, getDefaultParticleSystemConfig, isComputeCapableRenderer, isLifeTimeCurve, linearToSRGB, normalizeBackgroundToVector3, normalizeDepthTextureValue, normalizeTextureValue, normalizeVector2Value, registerTSLMaterialFactory, removeBezierCurveFunction, resolveSimulationBackend, resolveWebGPUEffectiveRendererType, rgbSRGBToLinear, sRGBToLinear, serializeParticleSystem, updateParticleSystems };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

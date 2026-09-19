@@ -652,15 +652,9 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
   (convertedConfig.renderer as { materialBackend?: 'TSL' | 'GLSL' }).materialBackend =
     useTSLMaterial ? 'TSL' : 'GLSL';
 
-  // POINTS rendererType relies on `gl_PointCoord`, which is not available in WGSL.
-  // Force INSTANCED whenever the TSL (WebGPU-backend) material path is in use.
-  if (useTSLMaterial) {
-    const rt = convertedConfig.renderer?.rendererType;
-    if (!rt || rt === 'POINTS') {
-      convertedConfig.renderer.rendererType =
-        'INSTANCED' as typeof convertedConfig.renderer.rendererType;
-    }
-  }
+  // No more harness coercion: the requested `rendererType` stays as authored
+  // and the engine's `resolveWebGPUEffectiveRendererType()` is the canonical
+  // 4 -> 4 mapping (`requested POINTS = effective POINTS` billboard quad).
 
   // Same fatal-state rule as the examples harness: a throw from the engine /
   // pipeline creation stops dispatch for this system once, keeps the editor
@@ -692,10 +686,23 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     noiseActive: !!activeConfig.noise?.isActive,
   };
 
-  // Update backend indicator badge
+  // Update backend indicator badge — same stat names as the examples harness:
+  // `simulation backend` + `material backend` + the renderer names derived by
+  // the engine (`effective renderer` + `requested rendererType`).
   if (backendBadge) {
     const isGPU = !!particleSystem.computeNode;
-    backendBadge.textContent = isGPU ? 'GPU' : 'CPU';
+    const rrDbg = (particleSystem as unknown as {
+      gpuDebug?: {
+        effectiveRendererType?: string;
+        requestedRendererType?: string;
+      };
+    }).gpuDebug;
+    const effective = rrDbg?.effectiveRendererType ?? 'POINTS';
+    const requested = rrDbg?.requestedRendererType ?? 'POINTS';
+    backendBadge.textContent = `simulation: ${isGPU ? 'GPU' : 'CPU'} · material: ${
+      useTSLMaterial ? 'TSL' : 'GLSL'
+    } · effective renderer: ${effective}`;
+    backendBadge.title = `requested rendererType: ${requested} | effective renderer: ${effective}`;
     backendBadge.style.background = isGPU ? '#2e7d32' : '#555';
   }
 

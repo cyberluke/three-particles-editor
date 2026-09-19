@@ -114,7 +114,11 @@ function prepareConfig(cfg0, textureId, meshType) {
   cfg.simulationBackend = 'GPU';
   const rt = cfg.renderer.rendererType;
   if (!rt || rt === 'POINTS') cfg.renderer.rendererType = 'INSTANCED';
-  if (textureId) cfg.map = { isTextureLike: true };
+  if (textureId) {
+    const t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    t.needsUpdate = true;
+    cfg.map = t;
+  }
   void meshType;
   return cfg;
 }

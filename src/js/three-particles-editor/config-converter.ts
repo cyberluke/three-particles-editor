@@ -8,6 +8,10 @@ import type {
 } from '@cyberluke/three-particles';
 import * as THREE from 'three';
 
+/** `isVector2()` — live THREE.Vector2 vs the plain `{x,y}` of JSON clones. */
+const isVector2 = (value: unknown): value is THREE.Vector2 =>
+  value instanceof THREE.Vector2;
+
 /**
  * Converts a value from the old MinMaxNumber format to the new format
  * (Constant | RandomBetweenTwoConstants | LifetimeCurve)
@@ -379,26 +383,30 @@ export const convertToNewFormat = (oldConfig: LegacyParticleSystemConfig): Parti
         fps?: number;
         startFrame?: number | { min: number; max: number };
       };
+    }
 
-      // Copy tiles with proper type conversion if it exists
-      if (oldTextureSheetAnimation.tiles) {
-        // Create a THREE.Vector2 object with the appropriate x and y values
-        newConfig.textureSheetAnimation.tiles = new THREE.Vector2(
-          oldTextureSheetAnimation.tiles.x,
-          oldTextureSheetAnimation.tiles.y
-        );
-      }
+    // The JSON round trip always yields a PLAIN `tiles` object (no
+    // isVector2), so the Vector2 rebuild must run unconditionally — the
+    // TSL material boundary only accepts THREE.Vector2 | array | {u,v}
+    // and a plain leftover object renders only the first sheet row.
+    // Copy tiles with proper type conversion if it exists
+    if (oldTextureSheetAnimation.tiles && !isVector2(newConfig.textureSheetAnimation.tiles)) {
+      // Create a THREE.Vector2 object with the appropriate x and y values
+      newConfig.textureSheetAnimation.tiles = new THREE.Vector2(
+        oldTextureSheetAnimation.tiles.x,
+        oldTextureSheetAnimation.tiles.y
+      );
+    }
 
-      // Copy timeMode with proper type conversion if it exists
-      if (oldTextureSheetAnimation.timeMode) {
-        // Convert string to TimeMode enum if possible, or use as is with type assertion
-        newConfig.textureSheetAnimation.timeMode = oldTextureSheetAnimation.timeMode as TimeMode;
-      }
+    // Copy timeMode with proper type conversion if it exists
+    if (oldTextureSheetAnimation.timeMode) {
+      // Convert string to TimeMode enum if possible, or use as is with type assertion
+      newConfig.textureSheetAnimation.timeMode = oldTextureSheetAnimation.timeMode as TimeMode;
+    }
 
-      // Copy fps with proper type conversion if it exists
-      if (oldTextureSheetAnimation.fps !== undefined) {
-        newConfig.textureSheetAnimation.fps = oldTextureSheetAnimation.fps;
-      }
+    // Copy fps with proper type conversion if it exists
+    if (oldTextureSheetAnimation.fps !== undefined) {
+      newConfig.textureSheetAnimation.fps = oldTextureSheetAnimation.fps;
     }
 
     // Handle startFrame property which can be a number or an object with min/max

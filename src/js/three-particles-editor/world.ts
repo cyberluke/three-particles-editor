@@ -18,6 +18,26 @@ let computeDispatchCount = 0;
 let computeFailed = false;
 let computeFatalMessage: string | null = null;
 
+/**
+ * 180: `WebGPUBackend.device` is the GPUDevice. Async device errors surface as
+ * `uncapturederror` events on it; register exactly once, after `init()`.
+ */
+const installDeviceFatal = (r: WebGPURenderer): void => {
+  const backend = (r as unknown as {
+    backend?: { device?: GPUDevice; _device?: GPUDevice };
+  }).backend;
+  const gpuDevice = backend?.device ?? backend?._device;
+  if (!gpuDevice || typeof gpuDevice.addEventListener !== 'function') return;
+  gpuDevice.addEventListener('uncapturederror', (ev: { error?: { message?: string } }) => {
+    if (computeFailed) return; // already failed once (no error spam)
+    computeFailed = true;
+    computeFatalMessage =
+      'WebGPU uncaptured error: ' +
+      ((ev && ev.error && ev.error.message) || 'unknown uncaptured WebGPU error');
+    console.error('[PS:fatal] editor:', computeFatalMessage);
+  });
+};
+
 export const createWorld = async (targetQuery: string): Promise<THREE.Scene> => {
   const container = document.querySelector(targetQuery);
   if (!container) {
@@ -40,6 +60,10 @@ export const createWorld = async (targetQuery: string): Promise<THREE.Scene> => 
   renderer.toneMappingExposure = 1;
   await renderer.init();
   container.appendChild(renderer.domElement);
+
+  // Device-level async fatal errors (`uncapturederror`) enter the same
+  // one-shot fatal state as synchronous compute failures (no cascade).
+  installDeviceFatal(renderer);
 
   // Create depth render target for soft particles
   depthRenderTarget = new THREE.RenderTarget(window.innerWidth, window.innerHeight, {

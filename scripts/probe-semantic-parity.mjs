@@ -424,8 +424,8 @@ function gpuEuler(o, ax, ay, az) {
 {
   const T = await import('three/webgpu');
   const TSL = await import('three/tsl');
-  const w = await import('../public/lib/three-particles-webgpu.esm.js?v=7');
-  const idx = await import('../public/lib/three-particles.esm.js?v=7');
+  const w = await import('../public/lib/three-particles-webgpu.esm.js?v=9');
+  const idx = await import('../public/lib/three-particles.esm.js?v=9');
   idx.registerTSLMaterialFactory({
     createTSLParticleMaterial: w.createTSLParticleMaterial,
     createTSLTrailMaterial: w.createTSLTrailMaterial,
@@ -436,7 +436,7 @@ function gpuEuler(o, ax, ay, az) {
     encodeForceFieldsForGPU: w.encodeForceFieldsForGPU,
     encodeCollisionPlanesForGPU: w.encodeCollisionPlanesForGPU,
   });
-  const { examples } = await import('../public/lib/examples-data.js?v=7');
+  const { examples } = await import('../public/lib/examples-data.js?v=9');
   const sup = examples.find((e) => e.id === 'gpu-supernova');
 
   const mkCfg = (stage) => {

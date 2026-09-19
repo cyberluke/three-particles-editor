@@ -1,8 +1,9 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, uniform, storage, uint, atomicStore, compute, atomicLoad, instanceIndex, atomicAdd, sqrt, mix, rand, buffer, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, Loop, Continue } from './three.tsl.js?v=8';
-import * as THREE from './three.module.js?v=8';
-import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=8';
-import { StorageBufferAttribute, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=8';
+export { assertNamed, normalizeBackgroundToVector3, normalizeDepthTextureValue, normalizeTextureValue, normalizeVector2Value, resolveWebGPUEffectiveRendererType } from '@cyberluke/three-particles';
+import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, uint, round, If, texture, screenUV, smoothstep, cross, uniform, storage, atomicStore, compute, atomicLoad, instanceIndex, atomicAdd, sqrt, mix, buffer, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, Loop, Continue } from './three.tsl.js?v=9';
+import * as THREE from './three.module.js?v=9';
+import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=9';
+import { StorageBufferAttribute, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=9';
 
 // src/webgpu.ts
 var PLANE_STRIDE = 12;
@@ -570,6 +571,41 @@ var sRGBToLinear = (c) => c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055
 // src/js/effects/three-particles/webgpu/compute-modifiers.ts
 var SUB_EMITTER_EVENT_STRIDE = 6;
 var subEmitterWindowSize = (capacity) => SUB_EMITTER_EVENT_STRIDE * Math.max(1, capacity);
+var asU32 = (n) => n.nodeType === "uint" ? n : n.toUint();
+var pcgRawU32 = (seedU) => {
+  const stateU = asU32(seedU).mul(uint(747796405)).add(uint(2891336453));
+  const wordU = stateU.shiftRight(stateU.shiftRight(uint(28)).add(uint(4))).bitXor(stateU).mul(uint(277803737));
+  return wordU.shiftRight(uint(22)).bitXor(wordU);
+};
+var pcg01 = (seedU) => pcgRawU32(seedU).toFloat().mul(float(1 / 4294967296));
+var mixBirthSeed = (birthNoU, systemSeedU, channelU) => asU32(birthNoU).mul(uint(2654435761)).bitXor(asU32(systemSeedU)).bitXor(asU32(channelU));
+var randomChannel = (birthNoU, systemSeedU, channelU) => pcg01(mixBirthSeed(birthNoU, systemSeedU, channelU));
+var stableSeedU32 = (birthNoU, systemSeedU) => pcgRawU32(mixBirthSeed(birthNoU, systemSeedU, CH.STABLE_SEED)).bitAnd(
+  uint(16777215)
+);
+var stableSeedFromExt = (extW) => extW.toUint();
+var nextSystemSeed = () => Math.floor(Math.random() * 4294967296) >>> 0;
+var CH = {
+  SHAPE_A: uint(1),
+  SHAPE_B: uint(2),
+  SHAPE_C: uint(3),
+  START_FRAME: uint(4),
+  SPEED: uint(5),
+  SIZE: uint(6),
+  ROTATION: uint(7),
+  OPACITY: uint(8),
+  LIFETIME: uint(9),
+  COLOR: uint(10),
+  ROTOL: uint(11),
+  STABLE_SEED: uint(12),
+  LIN_X: uint(13),
+  LIN_Y: uint(14),
+  LIN_Z: uint(15),
+  ORB_X: uint(16),
+  ORB_Y: uint(17),
+  ORB_Z: uint(18),
+  NOISE_PHASE: uint(19)
+};
 var createSubEmitterFifoAttribute = (capacity) => ({
   counter: new StorageBufferAttribute(new Uint32Array(2), 1),
   payload: new StorageBufferAttribute(
@@ -744,7 +780,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const uDeltaMs = uniform(float(0));
   const uNowMs = uniform(float(0));
   const uGravityVelocity = uniform(new Vector3(0, 0, 0));
-  const uSeed = uniform(float(0));
+  const uSystemSeed = uniform(nextSystemSeed(), "uint");
+  const uSeed = uSystemSeed;
   const uEmitCount = uniform(0, "uint");
   const uNoiseStrength = uniform(float(0));
   const uNoisePower = uniform(float(0));
@@ -802,7 +839,8 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const sEx = storage(buffers.startColorsExt, "vec4", maxParticles);
   const sOIA = storage(buffers.orbitalIsActive, "vec4", maxParticles);
   const allocatorCount = maxParticles + 1;
-  const ringMod = float(maxParticles);
+  float(maxParticles);
+  const ringModU = uint(maxParticles);
   const sAllocator = storage(buffers.allocator, "uint", Math.max(1, allocatorCount)).toAtomic();
   const sCD = buffer(buffers.packedData, "float", buffers.packedData.length);
   const lookupCurve = createCurveLookup(sCD);
@@ -892,7 +930,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       return mix(
         mn,
         mx,
-        rand(particleSeed.add(float(salt)))
+        pcg01(particleSeed.toUint().mul(uint(2654435761)).bitXor(salt))
       );
     }
     return float(a.min);
@@ -900,21 +938,19 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
   const emitKernel = Fn(() => {
     const i = instanceIndex;
     If(i.lessThan(uEmitCount), () => {
-      const birthNo = float(atomicAdd(sAllocator.element(0), uint(1))).toVar();
-      const slotIdx = birthNo.sub(floor(birthNo.div(ringMod)).mul(ringMod)).toVar();
-      const base2 = float(i).mul(float(16));
-      const rnd = (k) => rand(uSeed.add(base2.add(float(k + 0.13))));
-      const rA = rnd(1);
-      const rB = rnd(2);
-      const rC = rnd(3);
-      const rSheet = rnd(5);
-      const rSpeed = rnd(6);
-      const rSize = rnd(7);
-      const rRot = rnd(8);
-      const rOp = rnd(9);
-      const rLife = rnd(10);
-      const rColor = rnd(11);
-      const rRotSpeed = rnd(12);
+      const birthNo = atomicAdd(sAllocator.element(0), uint(1)).toVar();
+      const slotIdx = birthNo.mod(ringModU).toVar();
+      const rcA = randomChannel(birthNo, uSystemSeed, CH.SHAPE_A);
+      const rcB = randomChannel(birthNo, uSystemSeed, CH.SHAPE_B);
+      const rcC = randomChannel(birthNo, uSystemSeed, CH.SHAPE_C);
+      const rcSpeed = randomChannel(birthNo, uSystemSeed, CH.SPEED);
+      const rcSize = randomChannel(birthNo, uSystemSeed, CH.SIZE);
+      const rcRot = randomChannel(birthNo, uSystemSeed, CH.ROTATION);
+      const rcOpacity = randomChannel(birthNo, uSystemSeed, CH.OPACITY);
+      const rcSheet = randomChannel(birthNo, uSystemSeed, CH.START_FRAME);
+      const rcLife = randomChannel(birthNo, uSystemSeed, CH.LIFETIME);
+      const rcColor = randomChannel(birthNo, uSystemSeed, CH.COLOR);
+      const rcRotOl = randomChannel(birthNo, uSystemSeed, CH.ROTOL);
       const shE = shapeEmitNodes(
         {
           kind: uShape,
@@ -933,10 +969,10 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           speedMin: uSpeedMin,
           speedMax: uSpeedMax
         },
-        rA,
-        rB,
-        rC,
-        rSpeed
+        rcA,
+        rcB,
+        rcC,
+        rcSpeed
       );
       const pxL = shE.px;
       const pyL = shE.py;
@@ -953,26 +989,24 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       const ox = rotPX.mul(sxf).add(uEmitterPos.x);
       const oy = rotPY.mul(syf).add(uEmitterPos.y);
       const oz = rotPZ.mul(szf).add(uEmitterPos.z);
-      const opac = mix(uOpMin, uOpMax, rOp);
-      const clR = mix(uCRR, uCRX, rColor);
-      const clG = mix(uCGR, uCGX, rColor);
-      const clB = mix(uCBR, uCBX, rColor);
-      const slife = mix(uLifeMin, uLifeMax, rLife).mul(float(1e3));
-      const ssize = mix(uSizeMin, uSizeMax, rSize);
-      const srot = mix(uRotMin, uRotMax, rRot);
-      const startFrame = floor(mix(uFrMin, uFrMax, rSheet)).toVar();
-      const rotSpeed = mix(uRotOLMin, uRotOLMax, rRotSpeed);
-      const particleSeed = rand(
-        uSeed.add(
-          float(i).mul(float(16)).add(float(15.73))
-        )
-      );
+      const opac = mix(uOpMin, uOpMax, rcOpacity);
+      const clR = mix(uCRR, uCRX, rcColor);
+      const clG = mix(uCGR, uCGX, rcColor);
+      const clB = mix(uCBR, uCBX, rcColor);
+      const slife = mix(uLifeMin, uLifeMax, rcLife).mul(float(1e3));
+      const ssize = mix(uSizeMin, uSizeMax, rcSize);
+      const srot = mix(uRotMin, uRotMax, rcRot);
+      const startFrame = floor(mix(uFrMin, uFrMax, rcSheet)).toVar();
+      const rotSpeed = mix(uRotOLMin, uRotOLMax, rcRotOl);
+      const stableSeedU = stableSeedU32(birthNo, uSystemSeed);
       sPos.element(slotIdx).assign(vec4(ox, oy, oz, float(0)));
       sVel.element(slotIdx).assign(vec4(rotVX, rotVY, rotVZ, float(0)));
       sCol.element(slotIdx).assign(vec4(clR, clG, clB, opac));
       sPS.element(slotIdx).assign(vec4(float(0), ssize, srot, startFrame));
       sSV.element(slotIdx).assign(vec4(slife, ssize, opac, clR));
-      sEx.element(slotIdx).assign(vec4(clG, clB, rotSpeed, particleSeed));
+      sEx.element(slotIdx).assign(
+        vec4(clG, clB, rotSpeed, stableSeedU.toFloat())
+      );
       sOIA.element(slotIdx).assign(vec4(rotPX, rotPY, rotPZ, float(1)));
     });
   });
@@ -1011,17 +1045,17 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           sOrbitalIsActiveNode: sOIA
         });
         if (flags.linearVelocity) {
-          const lvx = simAxis(linAxes[0], lifePct, ex.w, 11.17);
-          const lvy = simAxis(linAxes[1], lifePct, ex.w, 23.41);
-          const lvz = simAxis(linAxes[2], lifePct, ex.w, 37.73);
+          const lvx = simAxis(linAxes[0], lifePct, stableSeedFromExt(ex.w), CH.LIN_X);
+          const lvy = simAxis(linAxes[1], lifePct, stableSeedFromExt(ex.w), CH.LIN_Y);
+          const lvz = simAxis(linAxes[2], lifePct, stableSeedFromExt(ex.w), CH.LIN_Z);
           pos.assign(pos.add(vec3(lvx, lvy, lvz).mul(uDelta)));
         }
         if (flags.orbitalVelocity) {
           const offset = vec3(oiaVec.x, oiaVec.y, oiaVec.z).toVar();
           pos.assign(pos.sub(offset));
-          const oX = simAxis(orbAxes[0], lifePct, ex.w, 51.19);
-          const oY = simAxis(orbAxes[1], lifePct, ex.w, 67.31);
-          const oZ = simAxis(orbAxes[2], lifePct, ex.w, 83.47);
+          const oX = simAxis(orbAxes[0], lifePct, stableSeedFromExt(ex.w), CH.ORB_X);
+          const oY = simAxis(orbAxes[1], lifePct, stableSeedFromExt(ex.w), CH.ORB_Y);
+          const oZ = simAxis(orbAxes[2], lifePct, stableSeedFromExt(ex.w), CH.ORB_Z);
           const angX = oX.mul(uDelta);
           const angY = oZ.mul(uDelta);
           const angZ = oY.mul(uDelta);
@@ -1068,7 +1102,9 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           ps.z.assign(ps.z.add(ex.z.mul(uDelta).mul(float(0.02))));
         }
         if (flags.noise) {
-          const noiseOffset = shapeParams.noiseUseRandomOffset ? rand(ex.w.add(float(97.13))).mul(float(100)) : float(0);
+          const noiseOffset = shapeParams.noiseUseRandomOffset ? pcg01(
+            stableSeedFromExt(ex.w).toUint().mul(uint(2654435761)).bitXor(CH.NOISE_PHASE)
+          ).mul(float(100)) : float(0);
           const np = lifePct.add(noiseOffset).mul(float(10)).mul(uNoiseStrength).mul(uNoiseFrequency);
           let noiseX = float(0).toVar();
           let noiseY = float(0).toVar();
@@ -1170,9 +1206,9 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
     const subBirthKernel = Fn(() => {
       const i = instanceIndex;
       If(i.lessThan(uEmitCount), () => {
-        const counterAfter = float(atomicLoad(sAllocator.element(0))).toVar();
-        const birthNo = counterAfter.sub(float(uEmitCount)).add(float(i)).toVar();
-        const slot = birthNo.sub(floor(birthNo.div(ringMod)).mul(ringMod)).toVar();
+        const counterAfter = atomicLoad(sAllocator.element(0)).toVar();
+        const birthNo = counterAfter.sub(uEmitCount).add(i).toVar();
+        const slot = birthNo.mod(ringModU).toVar();
         const p = sPos.element(slot).toVar();
         const v = sVel.element(slot).toVar();
         for (const f of birthFifos) {
@@ -1354,9 +1390,10 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
   const capacity = Math.max(1, fifo.capacity);
   const perEvent = Math.max(1, particlesPerEvent);
   const windowSize = subEmitterWindowSize(capacity);
-  const uSeed = uniform(float(0));
+  const uSystemSeed = uniform(nextSystemSeed(), "uint");
+  const uSeed = uSystemSeed;
   const uInherit = uniform(float(Math.max(0, inheritVelocity)));
-  const uFifoBase = uniform(float(0));
+  const uFifoBase = uniform(float(0), "uint");
   const uWrapperQuat = uniform(new Vector4(0, 0, 0, 1));
   const uEmitterPos = uniform(new Vector4(0, 0, 0, 0));
   const uWorldScale = uniform(new Vector3(1, 1, 1));
@@ -1403,7 +1440,8 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     "uint",
     Math.max(1, childMax + 1)
   ).toAtomic();
-  const cRingMod = float(childMax);
+  float(childMax);
+  const cRingModU = uint(childMax);
   const commandBuffer = new StorageBufferAttribute(
     new Float32Array(4 * (1 + capacity * perEvent)),
     4
@@ -1455,10 +1493,10 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
       const vY = fifoPayload.element(eb.add(float(4))).toVar();
       const vZ = fifoPayload.element(eb.add(float(5))).toVar();
       for (let jj = 0; jj < perEvent; jj++) {
-        const birthNo = float(atomicAdd(cAlloc.element(0), uint(1))).toVar();
-        const slot = birthNo.sub(floor(birthNo.div(cRingMod)).mul(cRingMod)).toVar();
+        const birthNo = atomicAdd(cAlloc.element(0), uint(1)).toVar();
+        const slot = birthNo.mod(cRingModU).toVar();
         const m = float(i.mul(float(perEvent)).add(float(jj)));
-        sCmd.element(float(1).add(m.mul(float(2)))).assign(vec4(slot, eX, eY, eZ));
+        sCmd.element(float(1).add(m.mul(float(2)))).assign(vec4(slot.toFloat(), eX, eY, eZ));
         sCmd.element(float(2).add(m.mul(float(2)))).assign(vec4(vX, vY, vZ, float(0)));
       }
     });
@@ -1469,6 +1507,7 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     const header = sCmd.element(float(0)).toVar();
     If(float(i).lessThan(header.x.mul(float(perEvent))), () => {
       const m = float(i);
+      const mU = i;
       const c0 = sCmd.element(float(1).add(m.mul(float(2)))).toVar();
       const c1 = sCmd.element(float(2).add(m.mul(float(2)))).toVar();
       const slot = c0.x;
@@ -1483,19 +1522,17 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
       ).toVar();
       const spAdd = parentSpeed.mul(uInherit);
       {
-        const rBase = m.mul(float(16));
-        const rnd = (k) => rand(uSeed.add(rBase.add(float(k + 0.13))));
-        const rA = rnd(1);
-        const rB = rnd(2);
-        const rC = rnd(3);
-        const rSheet = rnd(5);
-        const rSpeed = rnd(6);
-        const rSize = rnd(7);
-        const rRot = rnd(8);
-        const rOp = rnd(9);
-        const rLife = rnd(10);
-        const rColor = rnd(11);
-        const rRotSpeed = rnd(12);
+        const rcA = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.SHAPE_A));
+        const rcB = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.SHAPE_B));
+        const rcC = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.SHAPE_C));
+        const rcSpeed = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.SPEED));
+        const rcSize = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.SIZE));
+        const rcRot = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.ROTATION));
+        const rcOpacity = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.OPACITY));
+        const rcSheet = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.START_FRAME));
+        const rcLife = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.LIFETIME));
+        const rcColor = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.COLOR));
+        const rcRotOl = pcg01(mU.mul(uint(2654435761)).bitXor(uSystemSeed).bitXor(CH.ROTOL));
         const shE = shapeEmitNodes(
           {
             kind: cKind,
@@ -1514,10 +1551,10 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
             speedMin: cSpeedMin.add(spAdd),
             speedMax: cSpeedMax.add(spAdd)
           },
-          rA,
-          rB,
-          rC,
-          rSpeed
+          rcA,
+          rcB,
+          rcC,
+          rcSpeed
         );
         const [rx, ry, rz] = quatRotateNodes(
           shE.px,
@@ -1538,22 +1575,22 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
         const px = rx.mul(sxf).add(eX);
         const py = ry.mul(syf).add(eY);
         const pz = rz.mul(szf).add(eZ);
-        const opac = mix(cOpMin, cOpMax, rOp);
-        const clR = mix(cCRR, cCRX, rColor);
-        const clG = mix(cCGR, cCGX, rColor);
-        const clB = mix(cCBR, cCBX, rColor);
-        const slife = mix(cLifeMin, cLifeMax, rLife).mul(float(1e3));
-        const ssize = mix(cSizeMin, cSizeMax, rSize);
-        const srot = mix(cRotMin, cRotMax, rRot);
-        const startFrame = floor(mix(cFrMin, cFrMax, rSheet)).toVar();
+        const opac = mix(cOpMin, cOpMax, rcOpacity);
+        const clR = mix(cCRR, cCRX, rcColor);
+        const clG = mix(cCGR, cCGX, rcColor);
+        const clB = mix(cCBR, cCBX, rcColor);
+        const slife = mix(cLifeMin, cLifeMax, rcLife).mul(float(1e3));
+        const ssize = mix(cSizeMin, cSizeMax, rcSize);
+        const srot = mix(cRotMin, cRotMax, rcRot);
+        const startFrame = floor(mix(cFrMin, cFrMax, rcSheet)).toVar();
         const rotSpeed = mix(
           float(childParams.rotOverLifeMin),
           float(childParams.rotOverLifeMax),
-          rRotSpeed
+          rcRotOl
         );
-        const particleSeed = rand(
-          uSeed.add(rBase.add(float(15.73)))
-        );
+        const stableSeedU = pcgRawU32(
+          mixBirthSeed(mU, uSystemSeed, CH.STABLE_SEED)
+        ).bitAnd(uint(16777215)).toVar();
         cPos.element(slot).assign(vec4(px, py, pz, float(0)));
         cVel.element(slot).assign(vec4(rvx, rvy, rvz, float(0)));
         cCol.element(slot).assign(vec4(clR, clG, clB, opac));
@@ -1562,7 +1599,7 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
         );
         cSV.element(slot).assign(vec4(slife, ssize, opac, clR));
         cEx.element(slot).assign(
-          vec4(clG, clB, rotSpeed, particleSeed)
+          vec4(clG, clB, rotSpeed, stableSeedU.toFloat())
         );
         cOIA.element(slot).assign(vec4(rx, ry, rz, float(1)));
       }
@@ -2480,6 +2517,6 @@ function enableWebGPU(renderer) {
   );
 }
 
-export { createComputePipeline, createModifierStorageBuffers, createSubEmitterFifoAttribute, createSubEmitterInitUpdate, createTSLParticleMaterial, createTSLTrailMaterial, createTrailRibbonUpdate, enableWebGPU, encodeCollisionPlanesForGPU, encodeForceFieldsForGPU, encodeShapeEmitParams, subEmitterWindowSize };
+export { CH, createComputePipeline, createModifierStorageBuffers, createSubEmitterFifoAttribute, createSubEmitterInitUpdate, createTSLParticleMaterial, createTSLTrailMaterial, createTrailRibbonUpdate, enableWebGPU, encodeCollisionPlanesForGPU, encodeForceFieldsForGPU, encodeShapeEmitParams, mixBirthSeed, nextSystemSeed, pcg01, pcgRawU32, randomChannel, subEmitterWindowSize };
 //# sourceMappingURL=webgpu.js.map
 //# sourceMappingURL=webgpu.js.map
