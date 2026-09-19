@@ -1,6 +1,6 @@
 {
   "name": "@cyberluke/three-particles-editor",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "type": "module",
   "private": false,
   "description": "Visual editor and offline example gallery for the @cyberluke/three-particles WebGPU particle framework.",

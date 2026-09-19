@@ -4,7 +4,7 @@ import { ObjectUtils } from './three-utils/index.js?v=11';
 import { StorageBufferAttribute } from './three.webgpu.js?v=11';
 
 // src/js/effects/three-particles/version.ts
-var REVISION = '4.0.0';
+var REVISION = '4.0.1';
 if (typeof globalThis !== 'undefined') {
   const g = globalThis;
   if (g.__THREE_PARTICLES__ && g.__THREE_PARTICLES__ !== REVISION) {
