@@ -28,6 +28,8 @@ import {
   isUsingNodeMaterials,
   getRenderer,
   getComputeDispatchCount,
+  resetComputeFailure,
+  getComputeFailure,
 } from './three-particles-editor/world';
 import { getTexture, initAssets, loadCustomAssets } from './three-particles-editor/assets';
 
@@ -397,6 +399,9 @@ export const createParticleSystemEditor = async (targetQuery: string): Promise<v
   });
 };
 
+/** One-shot fatal state for `update()` (same rule as compute dispatch). */
+let updateFatal = false;
+
 const animate = (): void => {
   if (!isPaused) {
     const rawDelta = clock.getDelta();
@@ -404,11 +409,27 @@ const animate = (): void => {
     cycleData.delta = rawDelta > 0.1 ? 0.1 : rawDelta;
     cycleData.elapsed = clock.getElapsedTime();
 
-    configEntries.forEach(({ onUpdate }) => onUpdate && onUpdate(cycleData));
-    if (particleSystemConfig._editorData.useIndividualUpdate && particleSystem) {
-      particleSystem.update(cycleData);
-    } else {
-      updateParticleSystems(cycleData);
+    if (!updateFatal) {
+      try {
+        configEntries.forEach(({ onUpdate }) => onUpdate && onUpdate(cycleData));
+        if (particleSystemConfig._editorData.useIndividualUpdate && particleSystem) {
+          particleSystem.update(cycleData);
+        } else {
+          updateParticleSystems(cycleData);
+        }
+      } catch (e) {
+        const msg = (e as Error)?.message ?? String(e);
+        if (!updateFatal) {
+          console.error('[PS:fatal] update failed:', msg);
+          const badgeMsg = getComputeFailure() ? getComputeFailure() : msg;
+          if (backendBadge) {
+            backendBadge.textContent = 'FATAL';
+            backendBadge.style.background = '#a33';
+            backendBadge.title = badgeMsg;
+          }
+        }
+        updateFatal = true;
+      }
     }
   }
   const activeConfig = getActiveConfig();
@@ -641,7 +662,23 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     }
   }
 
-  particleSystem = createParticleSystem(convertedConfig);
+  // Same fatal-state rule as the examples harness: a throw from the engine /
+  // pipeline creation stops dispatch for this system once, keeps the editor
+  // UI alive, shows the exact engine error once, and the next config change
+  // recreates through a fresh pipeline (reset below).
+  resetComputeFailure();
+  updateFatal = false;
+  try {
+    particleSystem = createParticleSystem(convertedConfig);
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e);
+    console.error('[PS:fatal] createParticleSystem failed:', msg);
+    if (backendBadge) {
+      backendBadge.textContent = 'FATAL';
+      backendBadge.style.background = '#a33';
+    }
+    return;
+  }
 
   // Capture structural state at creation time so the live-update path can detect
   // when a full recreate is needed (e.g. WebGPU shader recompilation).

@@ -14,6 +14,9 @@ let stats: Stats;
 let mesh: THREE.Mesh;
 let depthRenderTarget: THREE.RenderTarget | null = null;
 let computeDispatchCount = 0;
+/** First fatal compute error stops ALL further dispatches (no error spam). */
+let computeFailed = false;
+let computeFatalMessage: string | null = null;
 
 export const createWorld = async (targetQuery: string): Promise<THREE.Scene> => {
   const container = document.querySelector(targetQuery);
@@ -83,9 +86,17 @@ export const updateWorld = (
   // GPU-only kernel returns an ordered [emitNode, simNode] pair; Three.js
   // natively expands `Node[]` into the same `computeList` order as variadic
   // `renderer.compute(a, b)`, so one call already covers both kernels.
-  if (computeNode) {
-    (renderer as any).compute(computeNode);
-    computeDispatchCount += Array.isArray(computeNode) ? (computeNode as unknown[]).length : 1;
+  if (computeNode && !computeFailed) {
+    try {
+      (renderer as any).compute(computeNode);
+      computeDispatchCount += Array.isArray(computeNode) ? (computeNode as unknown[]).length : 1;
+    } catch (e) {
+      // One-shot fatal state: stop dispatch for the failed system, keep the
+      // editor UI alive, log the root error exactly once.
+      computeFailed = true;
+      computeFatalMessage = (e as Error)?.message ?? String(e);
+      console.error('[PS:fatal] compute dispatch failed:', computeFatalMessage);
+    }
   }
 
   if (softParticlesEnabled && depthRenderTarget) {
@@ -102,6 +113,14 @@ export const updateWorld = (
 };
 
 export const getComputeDispatchCount = (): number => computeDispatchCount;
+
+/** Reset after (re)creating the particle system so the new pipeline is tried. */
+export const resetComputeFailure = (): void => {
+  computeFailed = false;
+  computeFatalMessage = null;
+};
+
+export const getComputeFailure = (): string | null => computeFatalMessage;
 
 export const setTerrain = (textureId?: string): void => {
   if (!textureId || textureId === TextureId.WIREFRAME) {
