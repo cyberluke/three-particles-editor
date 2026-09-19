@@ -156,27 +156,27 @@
   })();
   </script>
 
-  <!-- Offline importmap. `?v=7` busts prior browser cache of these files.
+  <!-- Offline importmap. `?v=8` busts prior browser cache of these files.
        Trailing "three/": "./lib/three/" resolves the 3.js addons and libs. -->
   <!-- 3.js 0.186 ships no `.min.js` anymore; the raw ESM builds are used directly. -->
   <script type="importmap">
   {
     "imports": {
-      "three": "./lib/three.module.js?v=7",
-      "three/webgpu": "./lib/three.webgpu.js?v=7",
-      "three/tsl": "./lib/three.tsl.js?v=7",
+      "three": "./lib/three.module.js?v=8",
+      "three/webgpu": "./lib/three.webgpu.js?v=8",
+      "three/tsl": "./lib/three.tsl.js?v=8",
       "three/": "./lib/three/",
-      "THREE": "./lib/three.webgpu.js?v=7",
-      "@cyberluke/three-particles": "./lib/three-particles.esm.js?v=7",
-      "@cyberluke/three-particles/webgpu": "./lib/three-particles-webgpu.esm.js?v=7",
-      "@newkrok/three-utils": "./lib/three-utils/index.js?v=7",
-      "@newkrok/three-utils/assets": "./lib/three-utils/assets/index.js?v=7",
-      "@newkrok/three-utils/audio": "./lib/three-utils/audio/index.js?v=7",
-      "easing-functions": "./lib/easing-functions.js?v=7",
-      "three-noise/build/three-noise.module.js": "./lib/three-noise.module.js?v=7"
+      "THREE": "./lib/three.webgpu.js?v=8",
+      "@cyberluke/three-particles": "./lib/three-particles.esm.js?v=8",
+      "@cyberluke/three-particles/webgpu": "./lib/three-particles-webgpu.esm.js?v=8",
+      "@newkrok/three-utils": "./lib/three-utils/index.js?v=8",
+      "@newkrok/three-utils/assets": "./lib/three-utils/assets/index.js?v=8",
+      "@newkrok/three-utils/audio": "./lib/three-utils/audio/index.js?v=8",
+      "easing-functions": "./lib/easing-functions.js?v=8",
+      "three-noise/build/three-noise.module.js": "./lib/three-noise.module.js?v=8"
     }
   }
   </script>
-  <script type="module" src="./examples.js?v=7"></script>
+  <script type="module" src="./examples.js?v=8"></script>
 </body>
 </html>

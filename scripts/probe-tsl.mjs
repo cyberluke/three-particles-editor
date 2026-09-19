@@ -151,22 +151,24 @@ log(`decode CONE: kind=${pCone.shapeUniforms?.shapeKind?.value} radius=${pCone.s
 log(`decode BOX: kind=${pBox.shapeUniforms?.shapeKind?.value} sx=${pBox.shapeUniforms?.boxScaleX?.value} sy=${pBox.shapeUniforms?.boxScaleY?.value} emitFrom=${pBox.shapeUniforms?.boxEmitFrom?.value} (want 4/8/0.5/1)`);
 log(`decode RECT: kind=${pRect.shapeUniforms?.shapeKind?.value} sx=${pRect.shapeUniforms?.rectangleScaleX?.value} rX=${pRect.shapeUniforms?.rectangleRotXDeg?.value} rY=${pRect.shapeUniforms?.rectangleRotYDeg?.value} (want 3/3/10/2)`);
 
-// Sub-emitter init kernel + trail ribbon kernel.
+// Sub-emitter init split (command build + child init) + trail ribbon kernel.
 const childBufs = lib.createModifierStorageBuffers(64, false, new Float32Array(256), false, false).buffers;
-const fifo = {
-  attribute: lib.createSubEmitterFifoAttribute(4),
-  trigger: 1, capacity: 4, windowSize: lib.subEmitterWindowSize?.(4) ?? 25,
-};
+const fifo = lib.createSubEmitterFifoAttribute(4);
+fifo.trigger = 1;
 const initPipe = lib.createSubEmitterInitUpdate(
   childBufs, 64, lib.encodeShapeEmitParams(cfg, 7), pipeline.buffers, 64, fifo, 0.5, 5
 );
-compileCompute('SUBEMIT', initPipe.initNode);
+compileCompute('SUBCMD', initPipe.commandBuildNode);
+compileCompute('SUBINIT', initPipe.childInitNode);
+compileCompute('SUBCLR', initPipe.counterClearNode);
 const L = 6, P = 64;
 const mkAttr = (n) => new THREE.StorageBufferAttribute(new Float32Array(n * 4), 4);
 const ribbon = lib.createTrailRibbonUpdate({
   position: mkAttr(P * L * 2), next: mkAttr(P * L * 2),
   uvColorA: mkAttr(P * L * 2), colorB: mkAttr(P * L * 2),
-  history: mkAttr(P * (L + 1)), particleColor: pipeline.buffers.color,
+  history: mkAttr(P * (L + 1)),
+  meta: new THREE.StorageBufferAttribute(new Uint32Array(2 * P), 1),
+  particleColor: pipeline.buffers.color,
   curveFns: { width: (t) => 1 - t, opacity: (t) => 1 - t },
   width: 0.2, length: L, maxTime: 0, maxParticles: P,
 });

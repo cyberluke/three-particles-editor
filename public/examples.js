@@ -13,7 +13,7 @@ import {
   updateParticleSystems,
 } from '@cyberluke/three-particles';
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
-import { examples } from './lib/examples-data.js?v=7';
+import { examples } from './lib/examples-data.js?v=8';
 
 /** Rescue-mode debug switch (drop to false once parity is signed off). */
 const PARTICLE_DEBUG = true;
@@ -245,6 +245,8 @@ function computeSampleStats(chunks) {
 async function runProbe(ctx, tag) {
   const dbg = ctx.system && ctx.system.gpuDebug;
   if (!dbg || !ctx.renderer.getArrayBufferAsync) return null;
+  // §14: probes only run after the first *successful* compute submission.
+  if (ctx.failed === true || ctx.pipelineHealthy === false) return null;
   const maxParticles = dbg.maxParticles;
   const wins = [];
   const add = (first, count) =>
@@ -346,14 +348,16 @@ async function makeCtx(id, entry, stage = 5) {
   console.log(`[PS:config] card #${id}`, snap);
   console.log(`[PS:pipeline] card #${id}`, {
     passes: system.gpuDebug?.allPassNames ?? system.gpuDebug?.passNames,
-    storageBindings: system.gpuDebug?.storageBindingCount,
-    curveTables: merged ? undefined : undefined,
+    perPassStorage: system.gpuDebug?.passBindingCounts,
+    maxPassStorage: system.gpuDebug?.storageBindingCount,
+    guaranteedLimit: 8,
   });
   const ctx = {
     id, renderer, scene, camera, system, paused: false, elapsed: 0,
     clock: makeClock(), cfg: merged, snap, stage,
     frames: [], milestoneIdx: 0, probeBusy: false,
     lastBucket: '',
+    failed: false, pipelineHealthy: false, fatalError: null,
   };
   cards.set(id, ctx);
   return ctx;
@@ -379,17 +383,35 @@ async function playCard(id) {
   ctx.clock.getDelta();
   ctx.milestoneIdx = 0;
   document.querySelectorAll('.card').forEach((c) => c.classList.toggle('active', c.dataset.name === id));
-  const step = () => {
-    if (activeId !== id) return;
+  const markFatal = (e) => {
+    ctx.failed = true;
+    ctx.fatalError = String((e && e.message) || e);
+    console.error(`[PS:fatal] ${id}`, ctx.fatalError);
+    const st = document.getElementById('stats-' + id);
+    if (st) st.textContent = 'FATAL: ' + ctx.fatalError;
+  };
+  const step = async () => {
+    if (activeId !== id || ctx.failed) return;
     const d = ctx.clock.getDelta();
     ctx.elapsed += d;
     ctx.frames.push(d);
     if (ctx.frames.length > 32) ctx.frames.shift();
     if (!ctx.paused) {
-      updateParticleSystems({ now: Date.now(), delta: d, elapsed: ctx.elapsed });
-      if (ctx.system.computeNode) ctx.renderer.compute(ctx.system.computeNode);
+      try {
+        updateParticleSystems({ now: Date.now(), delta: d, elapsed: ctx.elapsed });
+        if (ctx.system.computeNode) await ctx.renderer.compute(ctx.system.computeNode);
+        ctx.pipelineHealthy = true;
+      } catch (e) {
+        markFatal(e);
+        return;
+      }
     }
-    ctx.renderer.render(ctx.scene, ctx.camera);
+    try {
+      ctx.renderer.render(ctx.scene, ctx.camera);
+    } catch (e) {
+      markFatal(e);
+      return;
+    }
     const st = document.getElementById('stats-' + id);
     if (st) {
       const med = median(ctx.frames) || d;
@@ -406,7 +428,7 @@ async function playCard(id) {
       ctx.frame1Logged = true;
       console.log(`[PS:frame:1] ${id} first frame presented`);
     }
-    if (PARTICLE_DEBUG && !ctx.probeBusy) {
+    if (PARTICLE_DEBUG && ctx.pipelineHealthy && !ctx.failed && !ctx.probeBusy) {
       while (
         ctx.milestoneIdx < MILESTONES_MS.length &&
         elMs >= MILESTONES_MS[ctx.milestoneIdx]
@@ -434,7 +456,7 @@ async function playCard(id) {
 }
 
 // ─── Expand modal (one persistent WebGPU renderer reused across entries) ───
-const exp = { id: null, renderer: null, scene: null, camera: null, system: null, clock: null, paused: false, elapsed: 0, loop: 0, cfg: null, ctxLike: null, milestoneIdx: 0, probeBusy: false, frames: [] };
+const exp = { id: null, renderer: null, scene: null, camera: null, system: null, clock: null, paused: false, elapsed: 0, loop: 0, cfg: null, ctxLike: null, milestoneIdx: 0, probeBusy: false, frames: [], failed: false, pipelineHealthy: false, fatalError: null };
 async function openExpand(id) {
   const entry = examples.find((e) => e.id === id);
   if (!entry) return;
@@ -468,7 +490,7 @@ async function openExpand(id) {
   while (exp.scene.children.length > 1) exp.scene.remove(exp.scene.children[exp.scene.children.length - 1]);
   exp.scene.add(exp.system.instance);
   exp.clock = makeClock(); exp.elapsed = 0; exp.cfg = cfg; exp.milestoneIdx = 0;
-  exp.ctxLike = { id: id, renderer: exp.renderer, system: exp.system, get elapsed() { return exp.elapsed; } };
+  exp.ctxLike = { id: id, renderer: exp.renderer, system: exp.system, get elapsed() { return exp.elapsed; }, get failed() { return exp.failed; }, get pipelineHealthy() { return exp.pipelineHealthy; } };
   document.getElementById('expand-renderer-label').textContent = cfg.renderer.rendererType;
   document.getElementById('expand-backend-label').textContent = 'GPU';
   cancelAnimationFrame(exp.loop);
@@ -476,23 +498,45 @@ async function openExpand(id) {
   const tEl = document.getElementById('expand-frametime');
   const eEl = document.getElementById('expand-elapsed');
   exp.frames = [];
-  const loop = () => {
+  exp.failed = false;
+  exp.pipelineHealthy = false;
+  const markExpFatal = (e) => {
+    exp.failed = true;
+    exp.fatalError = String((e && e.message) || e);
+    console.error(`[PS:fatal] expand ${exp.id}`, exp.fatalError);
+    if (fEl) fEl.textContent = 'FATAL: ' + exp.fatalError;
+  };
+  const loop = async () => {
     if (!document.getElementById('expand-overlay').classList.contains('open')) return;
+    if (exp.failed) return;
     const d = exp.clock.getDelta();
-    exp.elapsed += d;
+    if (!exp.paused) {
+      exp.elapsed += d;
+    }
     exp.frames.push(d);
     if (exp.frames.length > 32) exp.frames.shift();
     if (!exp.paused) {
-      updateParticleSystems({ now: Date.now(), delta: d, elapsed: exp.elapsed });
-      if (exp.system.computeNode) exp.renderer.compute(exp.system.computeNode);
+      try {
+        updateParticleSystems({ now: Date.now(), delta: d, elapsed: exp.elapsed });
+        if (exp.system.computeNode) await exp.renderer.compute(exp.system.computeNode);
+        exp.pipelineHealthy = true;
+      } catch (e) {
+        markExpFatal(e);
+        return;
+      }
     }
-    exp.renderer.render(exp.scene, exp.camera);
+    try {
+      exp.renderer.render(exp.scene, exp.camera);
+    } catch (e) {
+      markExpFatal(e);
+      return;
+    }
     const med = median(exp.frames) || d;
     if (fEl) fEl.textContent = `${(1 / Math.max(med, 1e-4)).toFixed(0)} FPS (median ${(med * 1000).toFixed(1)}ms/tick)`;
     if (tEl) tEl.textContent = `last ${(d * 1000).toFixed(1)} ms`;
     if (eEl) eEl.textContent = `${exp.elapsed.toFixed(1)}s`;
     const elMs = exp.elapsed * 1000;
-    if (PARTICLE_DEBUG && !exp.probeBusy) {
+    if (PARTICLE_DEBUG && exp.pipelineHealthy && !exp.failed && !exp.probeBusy) {
       while (
         exp.milestoneIdx < MILESTONES_MS.length &&
         elMs >= MILESTONES_MS[exp.milestoneIdx]
