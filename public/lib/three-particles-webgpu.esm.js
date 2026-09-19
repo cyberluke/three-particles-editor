@@ -1,8 +1,8 @@
 import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
-import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, uniform, storage, uint, atomicStore, compute, atomicLoad, instanceIndex, sqrt, atomicAdd, mix, rand, buffer, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, Loop, Continue } from './three.tsl.js?v=7';
-import * as THREE from './three.module.js?v=7';
-import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=7';
-import { StorageBufferAttribute as StorageBufferAttribute$1, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=7';
+import { Fn, mod, float, floor, dot, vec3, step, min, max, vec4, vec2, abs, round, If, texture, screenUV, smoothstep, cross, uniform, storage, uint, atomicStore, compute, atomicLoad, instanceIndex, atomicAdd, sqrt, mix, rand, buffer, cos, sin, fract, attribute, modelViewMatrix, positionLocal, length, varyingProperty, pointUV, Discard, normalLocal, cameraProjectionMatrix, uv, normalize, cameraPosition, cameraViewMatrix, Loop, Continue } from './three.tsl.js?v=8';
+import * as THREE from './three.module.js?v=8';
+import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=8';
+import { StorageBufferAttribute, StorageInstancedBufferAttribute, PointsNodeMaterial, MeshBasicNodeMaterial } from './three.webgpu.js?v=8';
 
 // src/webgpu.ts
 var PLANE_STRIDE = 12;
@@ -571,8 +571,8 @@ var sRGBToLinear = (c) => c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055
 var SUB_EMITTER_EVENT_STRIDE = 6;
 var subEmitterWindowSize = (capacity) => SUB_EMITTER_EVENT_STRIDE * Math.max(1, capacity);
 var createSubEmitterFifoAttribute = (capacity) => ({
-  counter: new StorageBufferAttribute$1(new Uint32Array(2), 1),
-  payload: new StorageBufferAttribute$1(
+  counter: new StorageBufferAttribute(new Uint32Array(2), 1),
+  payload: new StorageBufferAttribute(
     new Float32Array(
       2 * SUB_EMITTER_EVENT_STRIDE * Math.max(1, capacity)
     ),
@@ -583,7 +583,7 @@ var createSubEmitterFifoAttribute = (capacity) => ({
   windowSize: subEmitterWindowSize(capacity)
 });
 function createModifierStorageBuffers(maxParticles, instanced, curveData, hasForceFields = false, hasCollisionPlanes = false, trailLength = 0) {
-  const Cls = instanced ? StorageInstancedBufferAttribute : StorageBufferAttribute$1;
+  const Cls = instanced ? StorageInstancedBufferAttribute : StorageBufferAttribute;
   const curveLen = Math.max(curveData.length, 1);
   const ffSize = hasForceFields ? FORCE_FIELD_DATA_SIZE : 0;
   const cpSize = hasCollisionPlanes ? COLLISION_PLANE_DATA_SIZE : 0;
@@ -593,20 +593,20 @@ function createModifierStorageBuffers(maxParticles, instanced, curveData, hasFor
   const allocatorData = new Uint32Array(allocatorCount);
   allocatorData[0] = 0;
   for (let i = 0; i < maxParticles; i++) allocatorData[i + 1] = i;
-  const trailMeta = trailLength > 0 ? new StorageBufferAttribute$1(
+  const trailMeta = trailLength > 0 ? new StorageBufferAttribute(
     new Uint32Array(Math.max(1, maxParticles) * 2),
     1
   ) : null;
   return {
     buffers: {
       position: new Cls(new Float32Array(maxParticles * 4), 4),
-      velocity: new StorageBufferAttribute$1(new Float32Array(maxParticles * 4), 4),
+      velocity: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
       color: new Cls(new Float32Array(maxParticles * 4), 4),
       particleState: new Cls(new Float32Array(maxParticles * 4), 4),
       startValues: new Cls(new Float32Array(maxParticles * 4), 4),
-      startColorsExt: new StorageBufferAttribute$1(new Float32Array(maxParticles * 4), 4),
-      orbitalIsActive: new StorageBufferAttribute$1(new Float32Array(maxParticles * 4), 4),
-      allocator: new StorageBufferAttribute$1(allocatorData, 1),
+      startColorsExt: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
+      orbitalIsActive: new StorageBufferAttribute(new Float32Array(maxParticles * 4), 4),
+      allocator: new StorageBufferAttribute(allocatorData, 1),
       trailMeta,
       packedData
     },
@@ -822,6 +822,9 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       Math.max(1, f.payload.array.length)
     )
   }));
+  const birthFifos = fifoNodes.filter((f) => f.trigger === 0);
+  const deathFifos = fifoNodes.filter((f) => f.trigger === 1);
+  const hasDeathFifo = deathFifos.length > 0;
   const writeFifoEvent = (f, x, y, z, vx, vy, vz) => {
     const winBase = uFifoBase.mul(float(f.windowSize)).toVar();
     const oldCount = float(
@@ -971,20 +974,16 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
       sSV.element(slotIdx).assign(vec4(slife, ssize, opac, clR));
       sEx.element(slotIdx).assign(vec4(clG, clB, rotSpeed, particleSeed));
       sOIA.element(slotIdx).assign(vec4(rotPX, rotPY, rotPZ, float(1)));
-      for (const f of fifoNodes) {
-        if (f.trigger === 0) {
-          writeFifoEvent(f, ox, oy, oz, rotVX, rotVY, rotVZ);
-        }
-      }
     });
   });
   const emitNode = compute(emitKernel(), maxParticles);
   const noiseOctavesCount = Math.max(1, Math.round(shapeParams.noiseOctaves || 1));
   const noiseFbmMax = 2 - Math.pow(2, -noiseOctavesCount);
-  const noiseOctDiv = Array.from(
-    { length: noiseOctavesCount },
-    () => float(noiseFbmMax)
-  );
+  if (!Number.isFinite(noiseFbmMax) || noiseFbmMax <= 0) {
+    throw new Error(
+      `three-particles: invalid FBM normalization ${noiseFbmMax}`
+    );
+  }
   const simKernel = Fn(() => {
     const i = instanceIndex;
     If(float(i).lessThan(float(maxParticles)), () => {
@@ -1078,7 +1077,7 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           let lac = 1;
           for (let o = 0; o < noiseOctavesCount; o++) {
             const t = np.mul(float(lac));
-            const sc = float(amp / noiseOctDiv[0]);
+            const sc = float(amp / noiseFbmMax);
             noiseX.assign(noiseX.add(snoise3D({ v: vec3(t, float(0), float(0)) }).mul(sc)));
             noiseY.assign(noiseY.add(snoise3D({ v: vec3(t, t, float(0)) }).mul(sc)));
             noiseZ.assign(noiseZ.add(snoise3D({ v: vec3(t, t, t) }).mul(sc)));
@@ -1098,7 +1097,36 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
           });
         }
         ps.x.assign(ps.x.add(uDeltaMs));
-        if (sTrail && sTrailMeta && trailDesc) {
+        sPos.element(i).assign(vec4(pos, float(0)));
+        sVel.element(i).assign(vec4(vel, float(0)));
+        sPS.element(i).assign(ps);
+        sOIA.element(i).assign(oiaVec);
+        If(ps.x.greaterThan(startLife), () => {
+          const inactive = sOIA.element(i).toVar();
+          sOIA.element(i).assign(
+            vec4(
+              inactive.x,
+              inactive.y,
+              inactive.z,
+              hasDeathFifo ? float(-1) : float(0)
+            )
+          );
+          sCol.element(i).assign(vec4(float(0), float(0), float(0), float(0)));
+        });
+      });
+    });
+  });
+  const simNode = compute(simKernel(), maxParticles);
+  let trailHistoryNode = null;
+  if (sTrail && sTrailMeta && trailDesc) {
+    const trailHistoryKernel = Fn(() => {
+      const i = instanceIndex;
+      If(float(i).lessThan(float(maxParticles)), () => {
+        const oiaVec = sOIA.element(i).toVar();
+        const activeNow = oiaVec.w.greaterThanEqual(float(0.5));
+        const pendingDeath = oiaVec.w.lessThan(float(-0.5));
+        If(activeNow.or(pendingDeath), () => {
+          const pos = sPos.element(i).toVar();
           const L = float(trailDesc.length);
           float(trailRows);
           const curIdx = i.mul(uint(2));
@@ -1132,37 +1160,158 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
               min(count.add(float(1)), float(trailDesc.length)).toUint()
             );
           });
-        }
-        sPos.element(i).assign(vec4(pos, float(0)));
-        sVel.element(i).assign(vec4(vel, float(0)));
-        sPS.element(i).assign(ps);
-        sOIA.element(i).assign(oiaVec);
-        If(ps.x.greaterThan(startLife), () => {
-          const inactive = sOIA.element(i).toVar();
-          sOIA.element(i).assign(vec4(inactive.x, inactive.y, inactive.z, float(0)));
-          sCol.element(i).assign(vec4(float(0), float(0), float(0), float(0)));
-          for (const f of fifoNodes) {
-            if (f.trigger === 1) {
-              writeFifoEvent(
-                f,
-                pos.x,
-                pos.y,
-                pos.z,
-                vel.x,
-                vel.y,
-                vel.z
-              );
-            }
-          }
         });
       });
     });
+    trailHistoryNode = compute(trailHistoryKernel(), maxParticles);
+  }
+  let subBirthEventsNode = null;
+  if (birthFifos.length > 0) {
+    const subBirthKernel = Fn(() => {
+      const i = instanceIndex;
+      If(i.lessThan(uEmitCount), () => {
+        const counterAfter = float(atomicLoad(sAllocator.element(0))).toVar();
+        const birthNo = counterAfter.sub(float(uEmitCount)).add(float(i)).toVar();
+        const slot = birthNo.sub(floor(birthNo.div(ringMod)).mul(ringMod)).toVar();
+        const p = sPos.element(slot).toVar();
+        const v = sVel.element(slot).toVar();
+        for (const f of birthFifos) {
+          writeFifoEvent(f, p.x, p.y, p.z, v.x, v.y, v.z);
+        }
+      });
+    });
+    subBirthEventsNode = compute(subBirthKernel(), maxParticles);
+  }
+  let subDeathEventsNode = null;
+  if (deathFifos.length > 0) {
+    const subDeathKernel = Fn(() => {
+      const i = instanceIndex;
+      If(float(i).lessThan(float(maxParticles)), () => {
+        const oiaVec = sOIA.element(i).toVar();
+        If(oiaVec.w.equal(float(-1)), () => {
+          const p = sPos.element(i).toVar();
+          const v = sVel.element(i).toVar();
+          for (const f of deathFifos) {
+            writeFifoEvent(f, p.x, p.y, p.z, v.x, v.y, v.z);
+          }
+          sOIA.element(i).assign(
+            vec4(oiaVec.x, oiaVec.y, oiaVec.z, float(0))
+          );
+        });
+      });
+    });
+    subDeathEventsNode = compute(subDeathKernel(), maxParticles);
+  }
+  const layout = (name, storageNodes, uniformNodes) => ({
+    name,
+    storageBindings: new Set(storageNodes.filter((n) => n != null)).size,
+    uniformBindings: new Set(uniformNodes.filter((n) => n != null)).size
   });
-  const simNode = compute(simKernel(), maxParticles);
+  const basePool = [sPos, sVel, sCol, sPS, sSV, sEx, sOIA, sAllocator];
+  const emitUniforms = [
+    uEmitCount,
+    uSeed,
+    uShape,
+    uRadius,
+    uRadiusThickness,
+    uArcDeg,
+    uConeAngleDeg,
+    uRectRX,
+    uRectRY,
+    uRectSX,
+    uRectSY,
+    uBoxSX,
+    uBoxSY,
+    uBoxSZ,
+    uBoxEmitFrom,
+    uSpeedMin,
+    uSpeedMax,
+    uSizeMin,
+    uSizeMax,
+    uRotMin,
+    uRotMax,
+    uOpMin,
+    uOpMax,
+    uLifeMin,
+    uLifeMax,
+    uCRR,
+    uCRX,
+    uCGR,
+    uCGX,
+    uCBR,
+    uCBX,
+    uFrMin,
+    uFrMax,
+    uRotOLMin,
+    uRotOLMax,
+    uWrapperQuat,
+    uEmitterPos,
+    uWorldScale
+  ];
+  const simUniforms = [
+    uDelta,
+    uDeltaMs,
+    uGravityVelocity,
+    uNoiseStrength,
+    uNoisePower,
+    uNoiseFrequency,
+    uNoisePosAmount,
+    uNoiseRotAmount,
+    uNoiseSizeAmount,
+    sCD,
+    ...Array.from(axisUniforms.values()).flat()
+  ];
+  const passLayouts = [
+    layout("emit", basePool, emitUniforms),
+    layout("simulate", basePool, simUniforms)
+  ];
+  if (trailHistoryNode) {
+    passLayouts.push(
+      layout("trail-history", [sPos, sOIA, sTrail, sTrailMeta], [uNowMs])
+    );
+  }
+  if (subBirthEventsNode) {
+    passLayouts.push(
+      layout(
+        "sub-birth-events",
+        [
+          sAllocator,
+          sPos,
+          sVel,
+          ...birthFifos.flatMap((f) => [f.count, f.payload])
+        ],
+        [uEmitCount, uFifoBase]
+      )
+    );
+  }
+  if (subDeathEventsNode) {
+    passLayouts.push(
+      layout(
+        "sub-death-events",
+        [
+          sPos,
+          sVel,
+          sOIA,
+          ...deathFifos.flatMap((f) => [f.count, f.payload])
+        ],
+        [uFifoBase]
+      )
+    );
+  }
   return {
     emitNode,
     simNode,
-    computeNodes: [emitNode, simNode],
+    trailHistoryNode,
+    subBirthEventsNode,
+    subDeathEventsNode,
+    computeNodes: [
+      emitNode,
+      ...subBirthEventsNode ? [subBirthEventsNode] : [],
+      simNode,
+      ...subDeathEventsNode ? [subDeathEventsNode] : [],
+      ...trailHistoryNode ? [trailHistoryNode] : []
+    ],
+    passLayouts,
     uniforms: {
       delta: uDelta,
       deltaMs: uDeltaMs,
@@ -1185,9 +1334,10 @@ function createModifierComputeUpdate(buffers, maxParticles, curveMap, flags, sha
     packedDataNode: sCD,
     passNames: [
       "emit",
+      ...subBirthEventsNode ? ["sub-birth-events"] : [],
       "simulate",
-      ...sTrail ? ["trail-history(sample)"] : [],
-      ...fifoNodes.map((f) => f.trigger === 0 ? "sub-birth(events)" : "sub-death(events)")
+      ...subDeathEventsNode ? ["sub-death-events"] : [],
+      ...trailHistoryNode ? ["trail-history"] : []
     ],
     trailMeta: buffers.trailMeta,
     // Emitter-pose uniforms, refreshed once per frame by the CPU (scalar only).
@@ -1254,8 +1404,10 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     Math.max(1, childMax + 1)
   ).toAtomic();
   const cRingMod = float(childMax);
-  storage(parent.position, "vec4", parentMax);
-  storage(parent.velocity, "vec4", parentMax);
+  const commandBuffer = new StorageBufferAttribute(
+    new Float32Array(4 * (1 + capacity * perEvent)),
+    4
+  );
   const fifoCounter = storage(
     fifo.counter,
     "uint",
@@ -1266,6 +1418,7 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     "float",
     Math.max(1, fifo.payload.array.length)
   );
+  const sCmd = storage(commandBuffer, "vec4", 1 + capacity * perEvent);
   const cParseAxis = (rawAxis, ci) => {
     if (rawAxis && typeof rawAxis === "object" && "min" in rawAxis) {
       const mn = Number(rawAxis.min) || 0;
@@ -1286,10 +1439,13 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
     atomicStore(fifoCounter.element(otherIdx), uint(0));
   });
   const counterClearNode = compute(counterClearKernel(), 1);
-  const kernel = Fn(() => {
+  const commandBuildKernel = Fn(() => {
     const i = instanceIndex;
     const winBase = uFifoBase.mul(float(windowSize)).toVar();
     const count = float(atomicLoad(fifoCounter.element(uFifoBase))).toVar();
+    If(float(i).equal(float(0)), () => {
+      sCmd.element(float(0)).assign(vec4(count, float(0), float(0), float(0)));
+    });
     If(float(i).lessThan(count), () => {
       const eb = winBase.add(float(i).mul(float(SUB_EMITTER_EVENT_STRIDE)));
       const eX = fifoPayload.element(eb).toVar();
@@ -1298,106 +1454,152 @@ function createSubEmitterInitUpdate(child, childMax, childParams, parent, parent
       const vX = fifoPayload.element(eb.add(float(3))).toVar();
       const vY = fifoPayload.element(eb.add(float(4))).toVar();
       const vZ = fifoPayload.element(eb.add(float(5))).toVar();
+      for (let jj = 0; jj < perEvent; jj++) {
+        const birthNo = float(atomicAdd(cAlloc.element(0), uint(1))).toVar();
+        const slot = birthNo.sub(floor(birthNo.div(cRingMod)).mul(cRingMod)).toVar();
+        const m = float(i.mul(float(perEvent)).add(float(jj)));
+        sCmd.element(float(1).add(m.mul(float(2)))).assign(vec4(slot, eX, eY, eZ));
+        sCmd.element(float(2).add(m.mul(float(2)))).assign(vec4(vX, vY, vZ, float(0)));
+      }
+    });
+  });
+  const commandBuildNode = compute(commandBuildKernel(), capacity);
+  const childInitKernel = Fn(() => {
+    const i = instanceIndex;
+    const header = sCmd.element(float(0)).toVar();
+    If(float(i).lessThan(header.x.mul(float(perEvent))), () => {
+      const m = float(i);
+      const c0 = sCmd.element(float(1).add(m.mul(float(2)))).toVar();
+      const c1 = sCmd.element(float(2).add(m.mul(float(2)))).toVar();
+      const slot = c0.x;
+      const eX = c0.y;
+      const eY = c0.z;
+      const eZ = c0.w;
+      const vX = c1.x;
+      const vY = c1.y;
+      const vZ = c1.z;
       const parentSpeed = sqrt(
         vX.mul(vX).add(vY.mul(vY)).add(vZ.mul(vZ))
       ).toVar();
       const spAdd = parentSpeed.mul(uInherit);
-      for (let jj = 0; jj < perEvent; jj++) {
-        const birthNo = float(atomicAdd(cAlloc.element(0), uint(1))).toVar();
-        const slot = birthNo.sub(floor(birthNo.div(cRingMod)).mul(cRingMod)).toVar();
-        {
-          const rBase = float(i).mul(float(16 * perEvent)).add(float(jj * 16));
-          const rnd = (k) => rand(uSeed.add(rBase.add(float(k + 0.13))));
-          rnd(0);
-          const rA = rnd(1);
-          const rB = rnd(2);
-          const rC = rnd(3);
-          const rSheet = rnd(5);
-          const rSpeed = rnd(6);
-          const rSize = rnd(7);
-          const rRot = rnd(8);
-          const rOp = rnd(9);
-          const rLife = rnd(10);
-          const rColor = rnd(11);
-          const rRotSpeed = rnd(12);
-          const shE = shapeEmitNodes(
-            {
-              kind: cKind,
-              radius: cRadius,
-              thickness: cThickness,
-              arcDeg: cArc,
-              coneAngleDeg: cAngle,
-              rectRX: cRRX,
-              rectRY: cRRY,
-              rectSX: cRSX,
-              rectSY: cRSY,
-              boxSX: cBSX,
-              boxSY: cBSY,
-              boxSZ: cBSZ,
-              boxFrom: cBF,
-              speedMin: cSpeedMin.add(spAdd),
-              speedMax: cSpeedMax.add(spAdd)
-            },
-            rA,
-            rB,
-            rC,
-            rSpeed
-          );
-          const [rx, ry, rz] = quatRotateNodes(
-            shE.px,
-            shE.py,
-            shE.pz,
-            uWrapperQuat
-          );
-          const [rvx, rvy, rvz] = quatRotateNodes(
-            shE.vx,
-            shE.vy,
-            shE.vz,
-            uWrapperQuat
-          );
-          const isWorld = uEmitterPos.w.greaterThan(0.5);
-          const sxf = isWorld.select(uWorldScale.x, float(1));
-          const syf = isWorld.select(uWorldScale.y, float(1));
-          const szf = isWorld.select(uWorldScale.z, float(1));
-          const px = rx.mul(sxf).add(eX);
-          const py = ry.mul(syf).add(eY);
-          const pz = rz.mul(szf).add(eZ);
-          const opac = mix(cOpMin, cOpMax, rOp);
-          const clR = mix(cCRR, cCRX, rColor);
-          const clG = mix(cCGR, cCGX, rColor);
-          const clB = mix(cCBR, cCBX, rColor);
-          const slife = mix(cLifeMin, cLifeMax, rLife).mul(float(1e3));
-          const ssize = mix(cSizeMin, cSizeMax, rSize);
-          const srot = mix(cRotMin, cRotMax, rRot);
-          const startFrame = floor(mix(cFrMin, cFrMax, rSheet)).toVar();
-          const rotSpeed = mix(
-            float(childParams.rotOverLifeMin),
-            float(childParams.rotOverLifeMax),
-            rRotSpeed
-          );
-          const particleSeed = rand(
-            uSeed.add(rBase.add(float(15.73)))
-          );
-          cPos.element(slot).assign(vec4(px, py, pz, float(0)));
-          cVel.element(slot).assign(vec4(rvx, rvy, rvz, float(0)));
-          cCol.element(slot).assign(vec4(clR, clG, clB, opac));
-          cPS.element(slot).assign(
-            vec4(float(0), ssize, srot, startFrame)
-          );
-          cSV.element(slot).assign(vec4(slife, ssize, opac, clR));
-          cEx.element(slot).assign(
-            vec4(clG, clB, rotSpeed, particleSeed)
-          );
-          cOIA.element(slot).assign(vec4(rx, ry, rz, float(1)));
-        }
+      {
+        const rBase = m.mul(float(16));
+        const rnd = (k) => rand(uSeed.add(rBase.add(float(k + 0.13))));
+        const rA = rnd(1);
+        const rB = rnd(2);
+        const rC = rnd(3);
+        const rSheet = rnd(5);
+        const rSpeed = rnd(6);
+        const rSize = rnd(7);
+        const rRot = rnd(8);
+        const rOp = rnd(9);
+        const rLife = rnd(10);
+        const rColor = rnd(11);
+        const rRotSpeed = rnd(12);
+        const shE = shapeEmitNodes(
+          {
+            kind: cKind,
+            radius: cRadius,
+            thickness: cThickness,
+            arcDeg: cArc,
+            coneAngleDeg: cAngle,
+            rectRX: cRRX,
+            rectRY: cRRY,
+            rectSX: cRSX,
+            rectSY: cRSY,
+            boxSX: cBSX,
+            boxSY: cBSY,
+            boxSZ: cBSZ,
+            boxFrom: cBF,
+            speedMin: cSpeedMin.add(spAdd),
+            speedMax: cSpeedMax.add(spAdd)
+          },
+          rA,
+          rB,
+          rC,
+          rSpeed
+        );
+        const [rx, ry, rz] = quatRotateNodes(
+          shE.px,
+          shE.py,
+          shE.pz,
+          uWrapperQuat
+        );
+        const [rvx, rvy, rvz] = quatRotateNodes(
+          shE.vx,
+          shE.vy,
+          shE.vz,
+          uWrapperQuat
+        );
+        const isWorld = uEmitterPos.w.greaterThan(0.5);
+        const sxf = isWorld.select(uWorldScale.x, float(1));
+        const syf = isWorld.select(uWorldScale.y, float(1));
+        const szf = isWorld.select(uWorldScale.z, float(1));
+        const px = rx.mul(sxf).add(eX);
+        const py = ry.mul(syf).add(eY);
+        const pz = rz.mul(szf).add(eZ);
+        const opac = mix(cOpMin, cOpMax, rOp);
+        const clR = mix(cCRR, cCRX, rColor);
+        const clG = mix(cCGR, cCGX, rColor);
+        const clB = mix(cCBR, cCBX, rColor);
+        const slife = mix(cLifeMin, cLifeMax, rLife).mul(float(1e3));
+        const ssize = mix(cSizeMin, cSizeMax, rSize);
+        const srot = mix(cRotMin, cRotMax, rRot);
+        const startFrame = floor(mix(cFrMin, cFrMax, rSheet)).toVar();
+        const rotSpeed = mix(
+          float(childParams.rotOverLifeMin),
+          float(childParams.rotOverLifeMax),
+          rRotSpeed
+        );
+        const particleSeed = rand(
+          uSeed.add(rBase.add(float(15.73)))
+        );
+        cPos.element(slot).assign(vec4(px, py, pz, float(0)));
+        cVel.element(slot).assign(vec4(rvx, rvy, rvz, float(0)));
+        cCol.element(slot).assign(vec4(clR, clG, clB, opac));
+        cPS.element(slot).assign(
+          vec4(float(0), ssize, srot, startFrame)
+        );
+        cSV.element(slot).assign(vec4(slife, ssize, opac, clR));
+        cEx.element(slot).assign(
+          vec4(clG, clB, rotSpeed, particleSeed)
+        );
+        cOIA.element(slot).assign(vec4(rx, ry, rz, float(1)));
       }
     });
   });
-  const initNode = compute(kernel(), capacity);
+  const childInitNode = compute(
+    childInitKernel(),
+    Math.max(1, capacity * perEvent)
+  );
+  const initPassLayouts = [
+    {
+      name: "sub-command-build",
+      storageBindings: 4,
+      // fifoCounter, fifoPayload, allocator, commands
+      uniformBindings: 1
+      // uFifoBase
+    },
+    {
+      // command buffer + the 7 child pools; NO allocator here.
+      name: "sub-child-init",
+      storageBindings: 8,
+      uniformBindings: 35
+      // seed/inherit/pose + 30 child shape scalars
+    },
+    {
+      name: "sub-counter-clear",
+      storageBindings: 1,
+      uniformBindings: 1
+    }
+  ];
   return {
-    initNode,
+    commandBuildNode,
+    childInitNode,
     counterClearNode,
-    passName: fifo.trigger === 0 ? "sub-birth-init" : "sub-death-init",
+    commandBuffer,
+    passLayouts: initPassLayouts,
+    passName: fifo.trigger === 0 ? "sub-birth" : "sub-death",
     counterClearPassName: "fifo-counter-clear",
     uniforms: {
       seed: uSeed,
@@ -1479,7 +1681,7 @@ function createTrailRibbonUpdate(desc) {
         const cb = lookupCurve({ curveIndex: float(IDX_CB), t });
         const pcol = pColor.element(i).toVar();
         const inRange = s.lessThan(count);
-        const ageOk = desc.maxTime > 0 ? uNowMs.sub(sample.w).lessOrEqual(float(desc.maxTime)) : inRange;
+        const ageOk = desc.maxTime > 0 ? uNowMs.sub(sample.w).lessThanEqual(float(desc.maxTime)) : inRange;
         const alive = inRange.and(ageOk);
         const hw = alive.select(halfWidthBase.mul(wScale), float(0));
         const alpha = alive.select(oScale.mul(pcol.w), float(0));
@@ -1505,6 +1707,10 @@ function createTrailRibbonUpdate(desc) {
   const ribbonNode = compute(kernel(), vertexCount);
   return {
     ribbonNode,
+    // 4 ribbon streams + history + meta + particle color = 7 storage bindings.
+    passLayouts: [
+      { name: "trail-ribbon", storageBindings: 7, uniformBindings: 2 }
+    ],
     uniforms: { nowMs: uNowMs },
     buffers: {
       position: desc.position,
@@ -2087,8 +2293,6 @@ function createTrailRibbonTSLMaterial(trailUniforms, rendererConfig) {
   material.colorNode = colorNode;
   return material;
 }
-
-// src/js/effects/three-particles/webgpu/tsl-materials.ts
 function createTSLParticleMaterial(rendererType, sharedUniforms, rendererConfig, gpuCompute = false) {
   switch (rendererType) {
     case "INSTANCED" /* INSTANCED */:

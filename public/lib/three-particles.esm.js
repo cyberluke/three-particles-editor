@@ -1,7 +1,7 @@
-import Easing from './easing-functions.js?v=7';
-import * as THREE3 from './three.module.js?v=7';
-import { ObjectUtils } from './three-utils/index.js?v=7';
-import { StorageBufferAttribute } from './three.webgpu.js?v=7';
+import Easing from './easing-functions.js?v=8';
+import * as THREE3 from './three.module.js?v=8';
+import { ObjectUtils } from './three-utils/index.js?v=8';
+import { StorageBufferAttribute } from './three.webgpu.js?v=8';
 
 // src/js/effects/three-particles/version.ts
 var REVISION = "4.0.0" ;
@@ -1266,11 +1266,22 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
         "three-particles: allocator capacity must equal maxParticles + 1."
       );
     }
-    const storageBindingCount = 8 + (trailDesc ? 2 : 0) + fifos.length * 2;
-    if (storageBindingCount > 8) {
-      throw new Error(
-        `three-particles: compute pass requires ${storageBindingCount} storage buffers; guaranteed WebGPU limit is 8`
-      );
+    const passLayouts = [
+      ...pipeline.passLayouts ?? [],
+      ...ribbonPipeline?.passLayouts ?? [],
+      ...subEntries.flatMap((e) => [
+        ...e.init.passLayouts ?? [],
+        ...(e.pipeline.passLayouts ?? []).map(
+          (p) => ({ ...p, name: `child:${p.name}` })
+        )
+      ])
+    ];
+    for (const pass of passLayouts) {
+      if (pass.storageBindings > 8) {
+        throw new Error(
+          `${pass.name}: ${pass.storageBindings} storage buffers > guaranteed limit 8`
+        );
+      }
     }
     if (trailDesc && trailDesc.meta !== pipeline.trailMeta) {
       throw new Error("three-particles: trail ring meta buffer mismatch.");
@@ -1342,8 +1353,8 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     noise: {
       isActive: normalizedConfig.noise.isActive,
       strength: normalizedConfig.noise.strength,
-      // Oracle `0.15 * strength`; the single fbmMax division happens when the
-      // uniform is written below (the FBM octave sum also divides by it).
+      // Oracle `0.15 * strength`; the single fbmMax division lives inside the
+      // FBM sum (CPU: FBM.get3; GPU: the octave loop amp / fbmMax).
       noisePower: 0.15 * normalizedConfig.noise.strength,
       frequency: normalizedConfig.noise.frequency,
       positionAmount: normalizedConfig.noise.positionAmount,
@@ -1417,18 +1428,19 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       ...pipeline.computeNodes ?? [],
       ...ribbonPipeline ? [ribbonPipeline.ribbonNode] : [],
       ...subEntries.flatMap((e) => [
-        e.init.initNode,
+        e.init.commandBuildNode,
+        e.init.childInitNode,
         ...e.init.counterClearNode != null ? [e.init.counterClearNode] : [],
         ...e.pipeline.computeNodes ?? []
       ])
     ],
     passNames: [
-      "emit",
-      "simulate",
+      ...pipeline.passNames ?? ["emit", "simulate"],
       ...ribbonPipeline ? ["trail-ribbon"] : [],
       ...subEntries.flatMap((e, ei) => [
-        `sub${ei}:${e.init.passName ?? "init"}`,
-        `sub${ei}:${e.init.counterClearPassName ?? "counter-clear"}`,
+        `sub${ei}:command-build`,
+        `sub${ei}:child-init`,
+        `sub${ei}:counter-clear`,
         `sub${ei}:child-emit`,
         `sub${ei}:child-sim`
       ])
@@ -1499,20 +1511,23 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
     }
   }
   createdParticleSystems.push(props);
-  const _dbgMainCount = 8 + (trailDesc ? 2 : 0) + fifos.length * 2;
   const _dbgPassCounts = [
-    ["emit", _dbgMainCount],
-    ["simulate", _dbgMainCount],
-    ...ribbonPipeline ? [["trail-ribbon", 7]] : [],
-    ...subEntries.flatMap(
-      (_, ei) => [
-        [`sub${ei}:init`, 11],
-        [`sub${ei}:counter-clear`, 1],
-        [`sub${ei}:child-emit`, _dbgMainCount],
-        [`sub${ei}:child-sim`, _dbgMainCount]
-      ]
-    )
+    ...(pipeline.passLayouts ?? []).map(
+      (p) => [p.name, p.storageBindings]
+    ),
+    ...(ribbonPipeline?.passLayouts ?? []).map(
+      (p) => [p.name, p.storageBindings]
+    ),
+    ...subEntries.flatMap((e, ei) => [
+      ...(e.init.passLayouts ?? []).map(
+        (p) => [`sub${ei}:${p.name}`, p.storageBindings]
+      ),
+      ...(e.pipeline.passLayouts ?? []).map(
+        (p) => [`sub${ei}:${p.name}`, p.storageBindings]
+      )
+    ])
   ];
+  const _dbgMaxPass = _dbgPassCounts.reduce((m, p) => Math.max(m, p[1]), 0);
   if (typeof console !== "undefined" && console.log) {
     const logCfg = normalizedConfig;
     const shpU = pipeline.shapeUniforms;
@@ -1623,11 +1638,11 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
       maxParticles,
       allocatorCount: pipeline.allocatorCount,
       buffers: pipeline.buffers,
-      emitNode: pipeline.computeNodes[0],
-      simNode: pipeline.computeNodes[1],
+      emitNode: pipeline.emitNode,
+      simNode: pipeline.simNode,
       passNames: pipeline.passNames ?? ["emit", "simulate"],
       allPassNames: props.passNames ?? [],
-      storageBindingCount: _dbgMainCount,
+      storageBindingCount: _dbgMaxPass,
       passBindingCounts: _dbgPassCounts,
       lastEmitCount: () => pipeline.uniforms.emitCount.value,
       /** Decode summary for the `[PS:config]` / `[PS:pipeline]` logs. */
@@ -1665,6 +1680,7 @@ var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow
   };
 };
 var _lastUploadStampMap = /* @__PURE__ */ new WeakMap();
+var _cmdUploadSeen = /* @__PURE__ */ new WeakSet();
 var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   const {
     generalData,
@@ -1787,10 +1803,13 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
   u.gravityVelocity.value.copy(gv);
   u.emitCount.value = emitCount;
   pipeline.emitNode.count = Math.max(1, emitCount);
+  if (pipeline.subBirthEventsNode) {
+    pipeline.subBirthEventsNode.count = Math.max(1, emitCount);
+  }
   u.seed.value = now * 1e-3;
   const n = generalData.noise;
   if (u.noiseStrength) u.noiseStrength.value = n.strength;
-  if (u.noisePower) u.noisePower.value = n.noisePower / Math.max(n.fbmMax, 1e-6);
+  if (u.noisePower) u.noisePower.value = n.noisePower;
   if (u.noiseFrequency) u.noiseFrequency.value = n.frequency;
   if (u.noisePositionAmount) u.noisePositionAmount.value = n.positionAmount;
   if (u.noiseRotationAmount) u.noiseRotationAmount.value = n.rotationAmount;
@@ -1836,7 +1855,7 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
     }
     if (e.noise) {
       if (cu.noiseStrength) cu.noiseStrength.value = e.noise.strength;
-      if (cu.noisePower) cu.noisePower.value = e.noise.noisePower / Math.max(e.noise.fbmMax, 1e-6);
+      if (cu.noisePower) cu.noisePower.value = e.noise.noisePower;
       if (cu.noiseFrequency) cu.noiseFrequency.value = e.noise.frequency;
       if (cu.noisePositionAmount) cu.noisePositionAmount.value = e.noise.positionAmount;
       if (cu.noiseRotationAmount) cu.noiseRotationAmount.value = e.noise.rotationAmount;
@@ -1931,6 +1950,11 @@ var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
         if (a && "needsUpdate" in a) a.needsUpdate = true;
       }
       _lastUploadStampMap.set(cb, 1);
+    }
+    const cmd = e.init.commandBuffer;
+    if (cmd && "needsUpdate" in cmd && !_cmdUploadSeen.has(cmd)) {
+      cmd.needsUpdate = true;
+      _cmdUploadSeen.add(cmd);
     }
   }
   const rb = props.ribbonBuffers;
