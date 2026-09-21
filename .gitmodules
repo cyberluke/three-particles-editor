@@ -1,3 +1,6 @@
 [submodule "packages/three-particles"]
 	path = packages/three-particles
 	url = https://github.com/cyberluke/three-particles.git
+[submodule "packages/three-utils"]
+	path = packages/three-utils
+	url = https://github.com/NewKrok/three-utils.git

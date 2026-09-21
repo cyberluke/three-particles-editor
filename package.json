@@ -1,6 +1,6 @@
 {
   "name": "@cyberluke/three-particles-editor",
-  "version": "4.0.1",
+  "version": "4.0.4",
   "type": "module",
   "private": false,
   "description": "Visual editor and offline example gallery for the @cyberluke/three-particles WebGPU particle framework.",
@@ -13,8 +13,9 @@
   "homepage": "https://github.com/cyberluke/three-particles-editor",
   "dependencies": {
     "@cyberluke/three-particles": "file:packages/three-particles",
+    "@jest/core": "^30.3.0",
     "@material/theme": "^14.0.0",
-    "@newkrok/three-utils": "^2.0.2",
+    "@newkrok/three-utils": "file:packages/three-utils",
     "esbuild": "^0.28.2",
     "prismjs": "^1.30.0",
     "sass": "^1.98.0",

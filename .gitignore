@@ -44,3 +44,24 @@ lerna-debug.log*
 
 # Coverage directory used by tools like istanbul
 coverage/
+
+# Scratch artifacts (probes / one-shot dumps; regenerated on demand)
+tmp/
+tmp*
+out_*.js
+t1.js
+vs.tmp.js
+bundle-dl.js
+served_bundle.js
+reg-editor*.json
+publish-*.log
+packages/*.log
+
+# Generated engine mirrors copied by `npm run mirror` (root-level copies)
+public/index.js
+public/index.d.ts
+public/webgpu.js
+public/chunk-*.js
+public/three-particles*.js
+public/*.js.map
+public/lib/*.js.map

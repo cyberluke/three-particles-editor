@@ -1,4 +1,7 @@
-import { registerTSLMaterialFactory } from '@cyberluke/three-particles';
+import {
+  registerTSLMaterialFactory,
+  registerElectricArcGPUFactory,
+} from '@cyberluke/three-particles';
 export {
   assertNamed,
   normalizeBackgroundToVector3,
@@ -7,6 +10,20 @@ export {
   normalizeVector2Value,
   resolveWebGPUEffectiveRendererType,
 } from '@cyberluke/three-particles';
+import * as THREE2 from 'three';
+import {
+  Vector3,
+  Vector4,
+  RedFormat,
+  FloatType,
+  HalfFloatType,
+  Mesh,
+  BufferGeometry,
+  BufferAttribute,
+  DoubleSide,
+  DataTexture,
+  AdditiveBlending,
+} from 'three';
 import {
   Fn,
   mod,
@@ -27,6 +44,10 @@ import {
   screenUV,
   smoothstep,
   cross,
+  length,
+  cameraViewMatrix,
+  normalize,
+  mix,
   uniform,
   storage,
   atomicStore,
@@ -35,36 +56,64 @@ import {
   instanceIndex,
   atomicAdd,
   sqrt,
-  mix,
   buffer,
+  attribute,
+  varyingProperty,
+  positionLocal,
+  modelViewMatrix,
+  cameraProjectionMatrix,
+  Discard,
+  exp2,
+  pow,
+  cameraFar,
+  cameraNear,
+  oneMinus,
+  textureLoad,
+  log2,
+  exp,
+  clamp,
+  reflect,
+  pass,
   cos,
   sin,
   fract,
-  attribute,
-  modelViewMatrix,
-  positionLocal,
-  length,
-  varyingProperty,
-  Discard,
+  invocationLocalIndex,
+  workgroupArray,
+  workgroupBarrier,
+  add,
+  sub,
   normalLocal,
-  cameraProjectionMatrix,
   uv,
-  normalize,
   cameraPosition,
-  cameraViewMatrix,
   Loop,
   Continue,
-} from './three.tsl.js?v=11';
-import * as THREE from './three.module.js?v=11';
-import { Vector4, Vector3, DoubleSide, DataTexture } from './three.module.js?v=11';
+  PI,
+} from 'three/tsl';
 import {
   StorageBufferAttribute,
   StorageInstancedBufferAttribute,
-  PointsNodeMaterial,
   MeshBasicNodeMaterial,
-} from './three.webgpu.js?v=11';
+  Scene,
+  PointsNodeMaterial,
+} from 'three/webgpu';
 
 // src/webgpu.ts
+
+// src/js/effects/electric-arc/electric-arc-math.ts
+var u32 = (n) => n >>> 0;
+var pcgRawU32Scalar = (seedU) => {
+  const s = u32(Math.imul(u32(seedU), 747796405) + 2891336453);
+  const shifted = s >>> ((s >>> 28) + 4);
+  let word = u32(shifted ^ s);
+  word = u32(Math.imul(word, 277803737));
+  return u32((word >>> 22) ^ word);
+};
+var pcg01Scalar = (seedU) => pcgRawU32Scalar(seedU) * (1 / 4294967296);
+var mixSeedScalar = (a, b, c) => u32(u32(Math.imul(u32(a), 2654435761)) ^ u32(b) ^ u32(c));
+var globalFlicker = (seed, epoch) => 0.78 + 0.27 * pcg01Scalar(mixSeedScalar(seed, epoch, 7));
+
+// src/js/effects/three-particles/color-utils.ts
+var sRGBToLinear = (c) => (c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 var PLANE_STRIDE = 12;
 var MAX_COLLISION_PLANES = 16;
 var COLLISION_PLANE_DATA_SIZE = MAX_COLLISION_PLANES * PLANE_STRIDE;
@@ -233,7 +282,7 @@ var calculateValue = (particleSystemId, value, time = 0) => {
     if (value.min === value.max) {
       return value.min ?? 0;
     }
-    return THREE.MathUtils.randFloat(value.min ?? 0, value.max ?? 1);
+    return THREE2.MathUtils.randFloat(value.min ?? 0, value.max ?? 1);
   }
   const lifetimeCurve = value;
   return (
@@ -573,10 +622,51 @@ Fn(({ t }) => {
   return vec3(noiseX, noiseY, noiseZ);
 });
 
-// src/js/effects/three-particles/color-utils.ts
-var sRGBToLinear = (c) => (c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-
 // src/js/effects/three-particles/webgpu/compute-modifiers.ts
+var DEFAULT_SHAPE_EMIT_PARAMS = {
+  shapeKind: 0,
+  radius: 1,
+  radiusThickness: 1,
+  arcDeg: 360,
+  coneAngleDeg: 90,
+  rectangleRotXDeg: 0,
+  rectangleRotYDeg: 0,
+  rectangleScaleX: 1,
+  rectangleScaleY: 1,
+  boxScaleX: 1,
+  boxScaleY: 1,
+  boxScaleZ: 1,
+  boxEmitFrom: 0,
+  speedMin: 1,
+  speedMax: 1,
+  sizeMin: 1,
+  sizeMax: 1,
+  rotMin: 0,
+  rotMax: 0,
+  opacityMin: 1,
+  opacityMax: 1,
+  lifeMin: 1,
+  lifeMax: 1,
+  colorRMin: 1,
+  colorRMax: 1,
+  colorGMin: 1,
+  colorGMax: 1,
+  colorBMin: 1,
+  colorBMax: 1,
+  startFrameMin: 0,
+  startFrameMax: 0,
+  rotationCurveActive: false,
+  rotationalXCurve: -1,
+  rotationalYCurve: -1,
+  rotationalZCurve: -1,
+  linearXCurve: -1,
+  linearYCurve: -1,
+  linearZCurve: -1,
+  rotOverLifeMin: 0,
+  rotOverLifeMax: 0,
+  noiseOctaves: 1,
+  noiseUseRandomOffset: false,
+};
 var SUB_EMITTER_EVENT_STRIDE = 6;
 var subEmitterWindowSize = (capacity) => SUB_EMITTER_EVENT_STRIDE * Math.max(1, capacity);
 var asU32 = (n) => (n.nodeType === 'uint' ? n : n.toUint());
@@ -682,10 +772,10 @@ function createCurveLookup(sCurveData) {
   });
 }
 function shapeEmitNodes(u, rA, rB, rC, rSpeed) {
-  const DEG = float(0.01745329);
+  const DEG2 = float(0.01745329);
   const uRadius = u.radius;
   const uRadiusThickness = u.thickness;
-  const thetaS = rA.mul(u.arcDeg).mul(DEG);
+  const thetaS = rA.mul(u.arcDeg).mul(DEG2);
   const cosPhi = rB.mul(float(2)).sub(float(1));
   const sinPhi = sqrt(float(1).sub(cosPhi.mul(cosPhi)));
   const dirSx = sinPhi.mul(cos(thetaS));
@@ -701,7 +791,7 @@ function shapeEmitNodes(u, rA, rB, rC, rSpeed) {
   const vSx = dirSx.mul(spS);
   const vSy = dirSy.mul(spS);
   const vSz = dirSz.mul(spS);
-  const thetaB = rA.mul(u.arcDeg).mul(DEG);
+  const thetaB = rA.mul(u.arcDeg).mul(DEG2);
   const dirBx = cos(thetaB);
   const dirBy = sin(thetaB);
   const distB = uRadius
@@ -710,7 +800,7 @@ function shapeEmitNodes(u, rA, rB, rC, rSpeed) {
   const pBx = dirBx.mul(distB);
   const pBy = dirBy.mul(distB);
   const pBz = float(0);
-  const nAngle = distB.div(uRadius.max(float(1e-6))).mul(u.coneAngleDeg.mul(DEG));
+  const nAngle = distB.div(uRadius.max(float(1e-6))).mul(u.coneAngleDeg.mul(DEG2));
   const spB = mix(u.speedMin, u.speedMax, rSpeed);
   const sinNA = sin(nAngle);
   const vCx = dirBx.mul(sinNA).mul(spB);
@@ -721,8 +811,8 @@ function shapeEmitNodes(u, rA, rB, rC, rSpeed) {
   const vIz = float(0);
   const rxOff = rA.mul(u.rectSX).sub(u.rectSX.mul(float(0.5)));
   const ryOff = rB.mul(u.rectSY).sub(u.rectSY.mul(float(0.5)));
-  const rotXr = u.rectRX.mul(DEG);
-  const rotYr = u.rectRY.mul(DEG);
+  const rotXr = u.rectRX.mul(DEG2);
+  const rotYr = u.rectRY.mul(DEG2);
   const pRx = rxOff.mul(cos(rotYr));
   const pRy = ryOff.mul(cos(rotXr));
   const pRz = rxOff.mul(sin(rotYr)).sub(ryOff.mul(sin(rotXr)));
@@ -813,7 +903,7 @@ function createModifierComputeUpdate(
   maxParticles,
   curveMap,
   flags,
-  shapeParams,
+  shapeParams = DEFAULT_SHAPE_EMIT_PARAMS,
   forceFieldCount = 0,
   collisionPlaneCount = 0,
   subFifos = [],
@@ -1112,11 +1202,17 @@ function createModifierComputeUpdate(
           oiaVec.assign(vec4(fx, fy, fz, oiaVec.w));
         }
         if (flags.sizeOverLifetime) {
-          const s = lookupCurve({ curveIndex: float(curveMap.sizeOverLifetime), t: lifePct });
+          const s = lookupCurve({
+            curveIndex: float(curveMap.sizeOverLifetime),
+            t: lifePct,
+          });
           ps.y.assign(s.mul(sv.y));
         }
         if (flags.opacityOverLifetime) {
-          const op = lookupCurve({ curveIndex: float(curveMap.opacityOverLifetime), t: lifePct });
+          const op = lookupCurve({
+            curveIndex: float(curveMap.opacityOverLifetime),
+            t: lifePct,
+          });
           const col = sCol.element(i).toVar();
           col.w.assign(op.mul(sv.z));
           sCol.element(i).assign(col);
@@ -1269,10 +1365,10 @@ function createModifierComputeUpdate(
     });
     subDeathEventsNode = compute(subDeathKernel(), maxParticles);
   }
-  const layout = (name, storageNodes, uniformNodes) => ({
+  const layout3 = (name, storageNodes, uniformNodes) => ({
     name,
-    storageBindings: new Set(storageNodes.filter((n) => n != null)).size,
-    uniformBindings: new Set(uniformNodes.filter((n) => n != null)).size,
+    storageBindings: new Set(storageNodes.filter((n) => n !== null && n !== void 0)).size,
+    uniformBindings: new Set(uniformNodes.filter((n) => n !== null && n !== void 0)).size,
   });
   const basePool = [sPos, sVel, sCol, sPS, sSV, sEx, sOIA, sAllocator];
   const emitUniforms = [
@@ -1329,15 +1425,15 @@ function createModifierComputeUpdate(
     ...Array.from(axisUniforms.values()).flat(),
   ];
   const passLayouts = [
-    layout('emit', basePool, emitUniforms),
-    layout('simulate', basePool, simUniforms),
+    layout3('emit', basePool, emitUniforms),
+    layout3('simulate', basePool, simUniforms),
   ];
   if (trailHistoryNode) {
-    passLayouts.push(layout('trail-history', [sPos, sOIA, sTrail, sTrailMeta], [uNowMs]));
+    passLayouts.push(layout3('trail-history', [sPos, sOIA, sTrail, sTrailMeta], [uNowMs]));
   }
   if (subBirthEventsNode) {
     passLayouts.push(
-      layout(
+      layout3(
         'sub-birth-events',
         [sAllocator, sPos, sVel, ...birthFifos.flatMap((f) => [f.count, f.payload])],
         [uEmitCount, uFifoBase]
@@ -1346,7 +1442,7 @@ function createModifierComputeUpdate(
   }
   if (subDeathEventsNode) {
     passLayouts.push(
-      layout(
+      layout3(
         'sub-death-events',
         [sPos, sVel, sOIA, ...deathFifos.flatMap((f) => [f.count, f.payload])],
         [uFifoBase]
@@ -1750,9 +1846,303 @@ function createTrailRibbonUpdate(desc) {
   };
 }
 
-// src/js/effects/three-particles/three-particles-constants.ts
-var POINT_SIZE_SCALE = 100;
-var ALPHA_DISCARD_THRESHOLD = 1e-3;
+// src/js/effects/electric-arc/webgpu/compute-electric-arc.ts
+var ARC_BRANCH_SAMPLES = 8;
+function createElectricArcCompute(cfg) {
+  const segments = cfg.segments;
+  const branchCount = cfg.branches.enabled
+    ? Math.max(0, Math.min(8, Math.round(cfg.branches.maxCount)))
+    : 0;
+  const totalSamples = segments + branchCount * ARC_BRANCH_SAMPLES;
+  const arcBuffer = new StorageBufferAttribute(new Float32Array(totalSamples * 4), 4);
+  const widthBuffer = new StorageBufferAttribute(new Float32Array(totalSamples), 1);
+  const nStart = uniform(new Vector3().copy(cfg.start));
+  const nEnd = uniform(new Vector3().copy(cfg.end));
+  const nU = uniform(new Vector3(1, 0, 0));
+  const nV = uniform(new Vector3(0, 0, 1));
+  const nTime = uniform(float(0));
+  const nPin = uniform(float(cfg.endpointPinning));
+  const nAmp = uniform(float(cfg.amplitude));
+  const nKnots = uniform(float(cfg.coarseKnots));
+  const nMicroF = uniform(float(cfg.microFrequency));
+  const nEpoch = uniform(float(0));
+  const nSeed = uniform(float(cfg.seed));
+  const nSeedInv = uniform(float(cfg.seed * 1e-3 + 1));
+  const nBvar = uniform(float(cfg.brightnessVariation));
+  const nGlobalF = uniform(float(1));
+  const nIntensity = uniform(float(cfg.intensity));
+  const nSegLast = uniform(float(segments - 1));
+  const nBranchBase = uniform(float(branchCount > 0 ? segments : 0));
+  const nLen0 = uniform(
+    float(cfg.branches.length[0] * Math.max(cfg.end.distanceTo(cfg.start), 0.01))
+  );
+  const nLen1 = uniform(
+    float(cfg.branches.length[1] * Math.max(cfg.end.distanceTo(cfg.start), 0.01))
+  );
+  const nProb = uniform(float(cfg.branchProbability || cfg.branches.probability));
+  const coarseOf = Fn(({ tN, axisU }) => {
+    const seedU = nSeed.toUint();
+    const epochU = nEpoch.toUint();
+    const cellF = tN.mul(nKnots);
+    const c0 = floor(cellF);
+    const f = cellF.sub(c0);
+    const c1 = c0.add(1);
+    const h0 = pcg01(mixBirthSeed(c0.toUint(), seedU, epochU).bitXor(axisU))
+      .mul(2)
+      .sub(1);
+    const h1 = pcg01(mixBirthSeed(c1.toUint(), seedU, epochU).bitXor(axisU))
+      .mul(2)
+      .sub(1);
+    return mix(h0, h1, f);
+  });
+  const pulseWidth = (iu, seedU, epochU, wXor) =>
+    pcg01(mixBirthSeed(iu.add(uint(1)), seedU, epochU).bitXor(wXor))
+      .mul(0.7)
+      .add(0.3);
+  const coarsePulseOf = Fn(({ tN, axisU }) => {
+    const seedU = nSeed.toUint();
+    const epochU = nEpoch.toUint();
+    const ax = axisU.toUint().sub(uint(1));
+    const wXor = uint(11).mul(ax.add(uint(1)));
+    const lvlXor = ax.add(uint(2));
+    const clsXor = ax.add(uint(5));
+    const degXor = ax.add(uint(9));
+    const nU2 = nKnots.toUint();
+    const total = float(0).toVar();
+    Loop(21, ({ i }) => {
+      If(i.lessThan(nKnots), () => {
+        total.addAssign(pulseWidth(i.toUint(), seedU, epochU, wXor));
+      });
+    });
+    const inv = float(1).div(total.max(float(1e-6)));
+    const acc0 = float(0).toVar();
+    const cellU = uint(0).toVar();
+    const fN = float(0).toVar();
+    const found = float(0).toVar();
+    Loop(21, ({ i }) => {
+      If(i.lessThan(nKnots).and(found.lessThan(0.5)), () => {
+        const wN = pulseWidth(i.toUint(), seedU, epochU, wXor).mul(inv);
+        const acc1 = acc0.add(wN);
+        If(tN.lessThan(acc1), () => {
+          found.assign(1);
+          cellU.assign(i.toUint());
+          fN.assign(
+            tN
+              .sub(acc0)
+              .div(wN.max(float(1e-6)))
+              .max(float(0))
+              .min(float(1))
+          );
+        });
+        acc0.assign(acc1);
+      });
+    });
+    If(tN.equal(float(1)), () => {
+      cellU.assign(nU2.sub(uint(1)));
+      fN.assign(float(1));
+    });
+    const deg01 = pcg01(mixBirthSeed(cellU.add(uint(900)), seedU, epochU).bitXor(degXor));
+    const degOn = deg01.lessThan(float(0.25));
+    const slotFrac = degOn.select(float(0.5), float(1));
+    const fS = fN.div(slotFrac).min(float(1));
+    const dead = fN.greaterThan(slotFrac).and(fN.lessThan(float(1)));
+    const level = pcg01(mixBirthSeed(cellU, seedU, epochU).bitXor(lvlXor))
+      .mul(2)
+      .sub(1);
+    const cls = pcg01(mixBirthSeed(cellU.add(uint(128)), seedU, epochU).bitXor(clsXor));
+    const riseV = fS.div(float(0.15)).min(float(1));
+    const tailV = exp(float(-3).mul(fS.sub(float(0.15))));
+    const spike = level.mul(fS.lessThan(float(0.15)).select(riseV, tailV));
+    const cls3 = cls
+      .lessThan(float(0.2))
+      .select(float(0), cls.lessThan(float(0.4)).select(level, spike));
+    const val = dead.select(float(0), cls3);
+    return degOn.select(val.mul(float(0.5)), val);
+  });
+  const coarseOrganicOf = Fn(({ tN, axisU }) => {
+    const seedU = nSeed.toUint();
+    const epochU = nEpoch.toUint();
+    const ax = axisU.toUint().sub(uint(1));
+    const lvlXor = ax.add(uint(2));
+    const holdXor = uint(31).mul(ax.add(uint(1)));
+    const nU2 = nKnots.toUint();
+    const cellF = tN.mul(nKnots);
+    const c0f = floor(cellF);
+    const f = cellF.sub(c0f);
+    const c0u = c0f.toUint().min(nU2);
+    const c1u = c0u.add(uint(1)).min(nU2);
+    const l0 = pcg01(mixBirthSeed(c0u, seedU, epochU).bitXor(lvlXor))
+      .mul(2)
+      .sub(1);
+    const l1 = pcg01(mixBirthSeed(c1u, seedU, epochU).bitXor(lvlXor))
+      .mul(2)
+      .sub(1);
+    const holdFrac = pcg01(mixBirthSeed(c0u.add(uint(700)), seedU, epochU).bitXor(holdXor))
+      .mul(float(0.4))
+      .add(float(0.45));
+    const travel = f.div(holdFrac).min(float(1));
+    const e = travel.mul(travel).mul(float(3).sub(travel.mul(float(2))));
+    const eased = l0.add(l1.sub(l0).mul(e));
+    return f.greaterThanEqual(holdFrac).select(l1, eased);
+  });
+  const coarseFn =
+    cfg.chaosAlgorithm === 'pulse'
+      ? coarsePulseOf
+      : cfg.chaosAlgorithm === 'organic'
+        ? coarseOrganicOf
+        : coarseOf;
+  const microOf = Fn(({ tN, ch }) => {
+    const p = vec3(tN.mul(nMicroF), nTime, ch.mul(nSeedInv));
+    return snoise3D({ v: p })
+      .mul(float(0.72))
+      .add(snoise3D({ v: p.mul(2.13) }).mul(float(0.28)));
+  });
+  const impulseOf = Fn(({ tN, ch }) =>
+    snoise3D({
+      v: vec3(
+        tN.mul(nMicroF).mul(2.7).add(float(11.37)),
+        nTime.mul(1.7).add(float(3.1)),
+        ch.add(float(9.7))
+      ),
+    })
+  );
+  const mainPosAt = Fn(({ tN }) => {
+    const base = mix(nStart, nEnd, tN);
+    const sT = tN.equal(float(1)).select(float(0.9999975), tN).toVar();
+    const env = pow(sin(PI.mul(sT)), nPin);
+    const ou = coarseFn({ tN: sT, axisU: uint(1) })
+      .mul(float(0.68))
+      .add(microOf({ tN: sT, ch: uint(1) }).mul(float(0.24)))
+      .add(impulseOf({ tN: sT, ch: uint(1) }).mul(float(0.08)));
+    const ov = coarseFn({ tN: sT, axisU: uint(2) })
+      .mul(float(0.68))
+      .add(microOf({ tN: sT, ch: uint(2) }).mul(float(0.24)))
+      .add(impulseOf({ tN: sT, ch: uint(2) }).mul(float(0.08)));
+    const ampEnv = nAmp.mul(env);
+    const x = base.x.add(nU.x.mul(ou).add(nV.x.mul(ov)).mul(ampEnv));
+    const y = base.y.add(nU.y.mul(ou).add(nV.y.mul(ov)).mul(ampEnv));
+    const z = base.z.add(nU.z.mul(ou).add(nV.z.mul(ov)).mul(ampEnv));
+    return vec3(
+      tN.equal(float(0)).select(nStart.x, tN.equal(float(1)).select(nEnd.x, x)),
+      tN.equal(float(0)).select(nStart.y, tN.equal(float(1)).select(nEnd.y, y)),
+      tN.equal(float(0)).select(nStart.z, tN.equal(float(1)).select(nEnd.z, z))
+    );
+  });
+  const rotMagAt = Fn(({ tN }) => {
+    const sT = tN.equal(float(1)).select(float(0.9999975), tN).toVar();
+    const env = pow(sin(PI.mul(sT)), nPin).toVar();
+    const ou = coarseFn({ tN: sT, axisU: uint(1) })
+      .mul(float(0.68))
+      .add(microOf({ tN: sT, ch: uint(1) }).mul(float(0.24)))
+      .add(impulseOf({ tN: sT, ch: uint(1) }).mul(float(0.08)))
+      .mul(env);
+    const ov = coarseFn({ tN: sT, axisU: uint(2) })
+      .mul(float(0.68))
+      .add(microOf({ tN: sT, ch: uint(2) }).mul(float(0.24)))
+      .add(impulseOf({ tN: sT, ch: uint(2) }).mul(float(0.08)))
+      .mul(env);
+    return sqrt(ou.mul(ou).add(ov.mul(ov))).min(float(1));
+  });
+  const kernel = Fn(() => {
+    const i = instanceIndex;
+    const iF = i.toFloat();
+    const sArc = storage(arcBuffer, 'vec4', totalSamples);
+    const sW = storage(widthBuffer, 'float', totalSamples);
+    const isMain = iF.lessThan(float(segments));
+    const tN = iF.div(nSegLast);
+    const mainPos = mainPosAt({ tN });
+    const hb = pcg01(mixBirthSeed(i, nSeed.toUint(), uint(5)));
+    const mainBrightness = nGlobalF.mul(float(1).add(nBvar.mul(hb.mul(2).sub(1))));
+    const rel = iF.sub(nBranchBase);
+    const bN = floor(rel.div(float(ARC_BRANCH_SAMPLES)));
+    const jN = rel.sub(bN.mul(float(ARC_BRANCH_SAMPLES)));
+    const tB = jN.div(float(ARC_BRANCH_SAMPLES - 1));
+    const bh = pcg01(mixBirthSeed(bN, nSeed.toUint(), uint(3)));
+    const active = bh.lessThan(nProb).select(float(1), float(0));
+    const dir1r = pcg01(mixBirthSeed(bN, nSeed.toUint(), uint(13)))
+      .mul(2)
+      .sub(1);
+    const dir2r = pcg01(mixBirthSeed(bN, nSeed.toUint(), uint(14)))
+      .mul(2)
+      .sub(1);
+    const dir3r = pcg01(mixBirthSeed(bN, nSeed.toUint(), uint(15)))
+      .mul(2)
+      .sub(1);
+    const dLen = sqrt(dir1r.mul(dir1r).add(dir2r.mul(dir2r)).add(dir3r.mul(dir3r))).max(
+      float(1e-6)
+    );
+    const dir1 = dir1r.div(dLen);
+    const dir2 = dir2r.div(dLen);
+    const dir3 = dir3r.div(dLen);
+    const hLen = pcg01(mixBirthSeed(bN, nSeed.toUint(), uint(16)));
+    const len = mix(nLen0, nLen1, hLen).mul(active);
+    const tS = floor(bh.mul(nSegLast)).div(nSegLast);
+    const origin = mainPosAt({ tN: tS });
+    const bend = pcg01(mixBirthSeed(bN, nSeed.toUint(), uint(18)))
+      .mul(2)
+      .sub(1)
+      .mul(float(0.28));
+    const cX = origin.x.add(dir1.mul(len).add(nU.x.mul(bend).mul(len)).mul(float(0.5)));
+    const cY = origin.y.add(dir2.mul(len).add(nU.y.mul(bend).mul(len)).mul(float(0.5)));
+    const cZ = origin.z.add(dir3.mul(len).add(nU.z.mul(bend).mul(len)).mul(float(0.5)));
+    const eX = origin.x.add(dir1.mul(len));
+    const eY = origin.y.add(dir2.mul(len));
+    const eZ = origin.z.add(dir3.mul(len));
+    const om = float(1).sub(tB);
+    const w0 = om.mul(om);
+    const w1 = om.mul(tB).mul(2);
+    const w2 = tB.mul(tB);
+    const bx = origin.x.mul(w0).add(cX.mul(w1)).add(eX.mul(w2));
+    const by = origin.y.mul(w0).add(cY.mul(w1)).add(eY.mul(w2));
+    const bz = origin.z.mul(w0).add(cZ.mul(w1)).add(eZ.mul(w2));
+    const x = isMain.select(mainPos.x, bx);
+    const y = isMain.select(mainPos.y, by);
+    const z = isMain.select(mainPos.z, bz);
+    const bright = isMain.select(mainBrightness, active);
+    sArc.element(i).assign(vec4(x, y, z, bright));
+    const rotMag = rotMagAt({ tN });
+    const wThin = float(1).sub(float(0.45).mul(rotMag));
+    const wMain = isMain.select(wThin, float(1));
+    sW.element(i).assign(wMain);
+  });
+  const computeNode = compute(kernel(), totalSamples);
+  let disposed = false;
+  return {
+    computeNode,
+    arcBuffer,
+    widthBuffer,
+    totalSamples,
+    mainCount: segments,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      arcBuffer.array = new Float32Array(0);
+      widthBuffer.array = new Float32Array(0);
+    },
+    uniforms: {
+      start: nStart,
+      end: nEnd,
+      basisU: nU,
+      basisV: nV,
+      time: nTime,
+      pin: nPin,
+      amp: nAmp,
+      knots: nKnots,
+      microF: nMicroF,
+      epoch: nEpoch,
+      seed: nSeed,
+      seedInv: nSeedInv,
+      brightnessVar: nBvar,
+      globalFlicker: nGlobalF,
+      intensity: nIntensity,
+      segLast: nSegLast,
+      branchBase: nBranchBase,
+      branchLen0: nLen0,
+      branchLen1: nLen1,
+      branchProb: nProb,
+    },
+  };
+}
 var _dummyTexture = null;
 function getDummyTexture() {
   if (!_dummyTexture) {
@@ -1830,6 +2220,25 @@ var computeSoftParticleFade = Fn(
     return softFade;
   }
 );
+var billboardPerp = Fn(({ tangent, viewDir }) => {
+  const rawPerp = cross(tangent, viewDir).toVar();
+  const perpLen = length(rawPerp);
+  const camRight = vec3(
+    cameraViewMatrix.element(0).element(0),
+    cameraViewMatrix.element(1).element(0),
+    cameraViewMatrix.element(2).element(0)
+  );
+  const camRightDotTangent = dot(camRight, tangent);
+  const fallbackPerp = normalize(camRight.sub(tangent.mul(camRightDotTangent)));
+  return normalize(
+    perpLen
+      .lessThan(1e-4)
+      .select(
+        fallbackPerp,
+        normalize(mix(fallbackPerp, normalize(rawPerp), smoothstep(float(0), float(0.7), perpLen)))
+      )
+  );
+});
 function applyBackgroundDiscard({ texColor, uDiscardBg, uBgColor, uBgTolerance }) {
   const diff = vec3(
     texColor.x.sub(uBgColor.x),
@@ -1839,7 +2248,1886 @@ function applyBackgroundDiscard({ texColor, uDiscardBg, uBgColor, uBgTolerance }
   Discard(uDiscardBg.greaterThan(0.5).and(abs(length(diff)).lessThan(uBgTolerance)));
 }
 
-// src/js/effects/three-particles/webgpu/tsl-instanced-billboard-material.ts
+// src/js/effects/electric-arc/webgpu/tsl-electric-arc-material.ts
+var profileAt = (d2, dAbs, uProfile, k) => {
+  const g = exp(d2.mul(float(-k)));
+  const t = float(1)
+    .sub(dAbs.mul(Math.sqrt(0.55 * k)))
+    .max(float(0));
+  return mix(g, t, uProfile);
+};
+function createElectricArcRibbonMaterial(arcBuffer, widthBuffer, totalSamples, params) {
+  const uCore = uniform(params.coreColor);
+  const uArc = uniform(params.arcColor);
+  const uHalf = uniform(float(params.halfWidth));
+  const uIntensity = uniform(float(params.intensity));
+  const uGlow = uniform(float(params.glowIntensity));
+  const uHalo = uniform(float(params.haloIntensity));
+  const uProfile = uniform(float(params.profileMode));
+  const aPacked = attribute('position', 'vec4');
+  const sArc = storage(arcBuffer, 'vec4', totalSamples);
+  const sW = storage(widthBuffer, 'float', totalSamples);
+  const vAcross = varyingProperty('float', 'vAcross');
+  const vBright = varyingProperty('float', 'vBright');
+  const positionNode = Fn(() => {
+    const iF = aPacked.x;
+    const side = aPacked.y;
+    const pI = aPacked.z;
+    const nI = aPacked.w;
+    const cur = sArc.element(iF.toUint());
+    const prev = sArc.element(pI.toUint());
+    const next = sArc.element(nI.toUint());
+    vAcross.assign(side);
+    vBright.assign(cur.w);
+    const rawTan = next.sub(prev);
+    const tanLen = length(rawTan);
+    const tangent = normalize(
+      tanLen.lessThan(float(1e-4)).select(vec3(float(0), float(1), float(0)), rawTan)
+    );
+    const curPos = vec3(cur.x, cur.y, cur.z);
+    const viewDir = normalize(cameraPosition.sub(curPos));
+    const perp = billboardPerp({ tangent, viewDir });
+    const wid = sW.element(iF.toUint());
+    return curPos.add(perp.mul(side).mul(uHalf.mul(wid)));
+  })();
+  const colorNode = Fn(() => {
+    const dAbs = vAcross.abs();
+    const d2 = dAbs.mul(dAbs);
+    const c = profileAt(d2, dAbs, uProfile, 70);
+    const i = profileAt(d2, dAbs, uProfile, 8);
+    const h = profileAt(d2, dAbs, uProfile, 2);
+    const isCore = params.layers === 'core';
+    const isSheath = params.layers === 'sheath';
+    const k = isCore ? c.mul(uIntensity) : isSheath ? i.mul(uGlow) : h.mul(uHalo);
+    const kk = k.mul(vBright);
+    const rgb0 = isCore || isSheath ? uCore : uArc;
+    const r = rgb0.x.mul(kk);
+    const g = rgb0.y.mul(kk);
+    const b = rgb0.z.mul(kk);
+    const alpha = kk.mul(float(0.5)).min(float(1));
+    Discard(alpha.lessThan(float(1e-3)));
+    return vec4(r, g, b, alpha);
+  })();
+  const material = new MeshBasicNodeMaterial();
+  material.transparent = true;
+  material.blending = AdditiveBlending;
+  material.depthTest = true;
+  material.depthWrite = false;
+  material.toneMapped = false;
+  material.fog = false;
+  material.side = DoubleSide;
+  material.positionNode = positionNode;
+  material.colorNode = colorNode;
+  return {
+    material,
+    halfWidth: uHalf,
+    intensity: uIntensity,
+    glowIntensity: uGlow,
+    haloIntensity: uHalo,
+    profileMode: uProfile,
+  };
+}
+function createElectricContactMaterial(params) {
+  const uColor = uniform(params.color);
+  const uCore = uniform(params.coreColor);
+  const uCenter = uniform(params.center);
+  const uHalf = uniform(float(params.halfSize));
+  const uIntensity = uniform(float(params.intensity));
+  const vUv = varyingProperty('vec2', 'vContactUV');
+  const positionNode = Fn(() => {
+    const corner = attribute('position', 'vec2');
+    vUv.assign(attribute('uv', 'vec2'));
+    const camRight = vec3(
+      cameraViewMatrix.element(0).element(0),
+      cameraViewMatrix.element(1).element(0),
+      cameraViewMatrix.element(2).element(0)
+    );
+    const camUp = vec3(
+      cameraViewMatrix.element(0).element(1),
+      cameraViewMatrix.element(1).element(1),
+      cameraViewMatrix.element(2).element(1)
+    );
+    return uCenter.add(camRight.mul(corner.x.mul(uHalf))).add(camUp.mul(corner.y.mul(uHalf)));
+  })();
+  const colorNode = Fn(() => {
+    const x = vUv.x.sub(float(0.5)).mul(float(2));
+    const y = vUv.y.sub(float(0.5)).mul(float(2));
+    const d2 = x.mul(x).add(y.mul(y));
+    const core = exp(d2.mul(float(-9)));
+    const corona = exp(d2.mul(float(-2.2)));
+    const kc = core.mul(uIntensity).mul(params.flicker);
+    const kw = corona.mul(params.flicker);
+    const r = uCore.x.mul(kc).add(uColor.x.mul(kw));
+    const g = uCore.y.mul(kc).add(uColor.y.mul(kw));
+    const b = uCore.z.mul(kc).add(uColor.z.mul(kw));
+    const alpha = core.add(corona.mul(float(0.6)));
+    Discard(alpha.lessThan(float(1e-3)));
+    return vec4(r, g, b, alpha);
+  })();
+  const material = new MeshBasicNodeMaterial();
+  material.transparent = true;
+  material.blending = AdditiveBlending;
+  material.depthTest = true;
+  material.depthWrite = false;
+  material.toneMapped = false;
+  material.fog = false;
+  material.side = DoubleSide;
+  material.positionNode = positionNode;
+  material.colorNode = colorNode;
+  return { material, halfSize: uHalf, intensity: uIntensity };
+}
+
+// src/js/effects/electric-arc/webgpu/electric-arc-webgpu.ts
+var _dir = new Vector3();
+var _helper = new Vector3();
+var _ub = new Vector3();
+var _vb = new Vector3();
+var nBasis = (out, a, b) => {
+  out.crossVectors(a, b);
+  const l = out.length() || 1;
+  out.multiplyScalar(1 / l);
+};
+function ribbonGeometry(start, count, u0, u1) {
+  const vertCount = count * 2;
+  const geometry = new THREE2.BufferGeometry();
+  const pos = new Float32Array(vertCount * 4);
+  const uv2 = new Float32Array(vertCount * 2);
+  const idx = new Uint16Array((count - 1) * 6);
+  const inv = 1 / (count - 1);
+  for (let j = 0; j < count; j++) {
+    const i = start + j;
+    const prev = j === 0 ? i : i - 1;
+    const next = j === count - 1 ? i : i + 1;
+    const li = j * 2;
+    const ri = li + 1;
+    pos[li * 4] = i;
+    pos[li * 4 + 1] = -1;
+    pos[li * 4 + 2] = prev;
+    pos[li * 4 + 3] = next;
+    pos[ri * 4] = i;
+    pos[ri * 4 + 1] = 1;
+    pos[ri * 4 + 2] = prev;
+    pos[ri * 4 + 3] = next;
+    const u = u0 + (u1 - u0) * j * inv;
+    uv2[li * 2] = u;
+    uv2[li * 2 + 1] = 0;
+    uv2[ri * 2] = u;
+    uv2[ri * 2 + 1] = 1;
+  }
+  for (let j = 0; j < count - 1; j++) {
+    const l0 = j * 2;
+    const r0 = l0 + 1;
+    const l1 = l0 + 2;
+    const r1 = l1 + 1;
+    const o = j * 6;
+    idx[o] = l0;
+    idx[o + 1] = r0;
+    idx[o + 2] = l1;
+    idx[o + 3] = r0;
+    idx[o + 4] = r1;
+    idx[o + 5] = l1;
+  }
+  geometry.setAttribute('position', new THREE2.BufferAttribute(pos, 4));
+  geometry.setAttribute('uv', new THREE2.BufferAttribute(uv2, 2));
+  geometry.setIndex(new THREE2.BufferAttribute(idx, 1));
+  geometry.boundingSphere = new THREE2.Sphere(new Vector3(), 8);
+  return geometry;
+}
+function contactGeometry() {
+  const geometry = new THREE2.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE2.BufferAttribute(new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), 2)
+  );
+  geometry.setAttribute(
+    'uv',
+    new THREE2.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), 2)
+  );
+  geometry.setIndex(new THREE2.BufferAttribute(new Uint16Array([0, 1, 2, 1, 3, 2]), 1));
+  geometry.boundingSphere = new THREE2.Sphere(new Vector3(), 1);
+  return geometry;
+}
+var setNum = (u, v) => {
+  u.value = v;
+};
+function createElectricArcGPU(cfg) {
+  const root = new THREE2.Group();
+  root.name = 'electric-arc-gpu';
+  const pipeline = createElectricArcCompute(cfg);
+  const { arcBuffer, widthBuffer, totalSamples, uniforms, mainCount } = pipeline;
+  const coreColorVec = new Vector3();
+  const arcColorVec = new Vector3();
+  const setColors = () => {
+    const c = new THREE2.Color(cfg.coreColor);
+    coreColorVec.set(c.r, c.g, c.b);
+    const a = new THREE2.Color(cfg.color);
+    arcColorVec.set(a.r, a.g, a.b);
+  };
+  setColors();
+  const coreHalf = Math.max(cfg.thickness, 5e-4) * 0.5;
+  const mainGeo = ribbonGeometry(0, mainCount, 0, 1);
+  const prof = cfg.glow.profile === 'triangle' ? 1 : 0;
+  const ribbonSpecs = [
+    {
+      layers: 'core',
+      halfWidth: coreHalf,
+      intensity: cfg.intensity,
+      glowIntensity: cfg.glow.intensity,
+      haloIntensity: cfg.glow.intensity * 0.4,
+    },
+    {
+      layers: 'sheath',
+      halfWidth: coreHalf * 2,
+      intensity: cfg.intensity,
+      glowIntensity: cfg.glow.intensity * 0.8,
+      haloIntensity: cfg.glow.intensity * 0.4,
+    },
+    {
+      layers: 'halo',
+      halfWidth: coreHalf * Math.max(2, cfg.glow.width),
+      intensity: cfg.intensity,
+      glowIntensity: cfg.glow.intensity * 0.8,
+      haloIntensity: cfg.glow.intensity * 0.4,
+    },
+  ];
+  const mainMeshes = [];
+  for (const spec of ribbonSpecs) {
+    const handles = createElectricArcRibbonMaterial(arcBuffer, widthBuffer, totalSamples, {
+      coreColor: coreColorVec,
+      arcColor: arcColorVec,
+      halfWidth: spec.halfWidth,
+      intensity: spec.intensity,
+      glowIntensity: spec.glowIntensity,
+      haloIntensity: spec.haloIntensity,
+      layers: spec.layers,
+      profileMode: prof,
+    });
+    const mesh = new THREE2.Mesh(mainGeo, handles.material);
+    mesh.frustumCulled = false;
+    root.add(mesh);
+    mainMeshes.push({ mesh, handles, layer: spec.layers });
+  }
+  const branchNum =
+    cfg.branches.enabled && cfg.branches.maxCount > 0
+      ? Math.min(8, Math.round(cfg.branches.maxCount))
+      : 0;
+  const branchMeshes = [];
+  const branchGeos = [];
+  if (branchNum > 0) {
+    const [ts0, ts1] = cfg.branches.thicknessScale;
+    const wMid = (ts0 + ts1) * 0.5;
+    const start0 = mainCount;
+    const geo = ribbonGeometry(start0, branchNum * ARC_BRANCH_SAMPLES, 0, 1);
+    const branchHandles = createElectricArcRibbonMaterial(arcBuffer, widthBuffer, totalSamples, {
+      coreColor: coreColorVec,
+      arcColor: arcColorVec,
+      halfWidth: coreHalf * wMid * 2,
+      intensity: cfg.intensity * 0.8,
+      glowIntensity: cfg.glow.intensity * 0.7,
+      haloIntensity: cfg.glow.intensity * 0.3,
+      layers: 'core',
+      profileMode: prof,
+    });
+    const mesh = new THREE2.Mesh(geo, branchHandles.material);
+    mesh.frustumCulled = false;
+    root.add(mesh);
+    branchGeos.push(geo);
+    branchMeshes.push({ mesh, handles: branchHandles });
+  }
+  const contactA = new Vector3(cfg.start.x, cfg.start.y, cfg.start.z);
+  const contactB = new Vector3(cfg.end.x, cfg.end.y, cfg.end.z);
+  const contactMeshes = [];
+  const contactGeo = contactGeometry();
+  if (cfg.contact.enabled) {
+    for (const center of [contactA, contactB]) {
+      const handles = createElectricContactMaterial({
+        color: arcColorVec,
+        coreColor: coreColorVec,
+        center,
+        halfSize: Math.max(cfg.contact.radius, 5e-3),
+        intensity: cfg.contact.intensity,
+        flicker: uniforms.globalFlicker,
+      });
+      const mesh = new THREE2.Mesh(contactGeo, handles.material);
+      mesh.frustumCulled = false;
+      root.add(mesh);
+      contactMeshes.push({ mesh, handles, center });
+    }
+  }
+  const update = (cycle, start, end) => {
+    uniforms.start.value.copy(start);
+    uniforms.end.value.copy(end);
+    _dir.subVectors(end, start);
+    const dist = Math.max(_dir.length(), 1e-4);
+    _dir.multiplyScalar(1 / dist);
+    if (_dir.y < 0.85 && _dir.y > -0.85) _helper.set(0, 1, 0);
+    else _helper.set(1, 0, 0);
+    nBasis(_ub, _dir, _helper);
+    nBasis(_vb, _dir, _ub);
+    uniforms.basisU.value.copy(_ub);
+    uniforms.basisV.value.copy(_vb);
+    const epoch = Math.floor(cycle.elapsed * cfg.flickerHz * cfg.speed);
+    const flicker = globalFlicker(cfg.seed, epoch);
+    setNum(uniforms.time, cycle.elapsed * cfg.speed);
+    setNum(uniforms.epoch, epoch);
+    setNum(uniforms.globalFlicker, flicker);
+    setNum(uniforms.amp, cfg.amplitude);
+    setNum(uniforms.knots, cfg.coarseKnots);
+    setNum(uniforms.microF, cfg.microFrequency);
+    setNum(uniforms.pin, cfg.endpointPinning);
+    setNum(uniforms.brightnessVar, cfg.brightnessVariation);
+    setNum(uniforms.intensity, cfg.intensity);
+    setNum(uniforms.branchProb, cfg.branchProbability || cfg.branches.probability);
+    if (contactMeshes.length === 2) {
+      contactMeshes[0].center.copy(start);
+      contactMeshes[1].center.copy(end);
+    }
+    return flicker;
+  };
+  const updateLive = (patch) => {
+    setColors();
+    const pMode = cfg.glow.profile === 'triangle' ? 1 : 0;
+    for (const m of mainMeshes) {
+      const h = m.handles;
+      setNum(h.profileMode, pMode);
+      if (m.layer === 'core') {
+        setNum(h.halfWidth, coreHalfOf());
+        setNum(h.intensity, cfg.intensity);
+      } else if (m.layer === 'sheath') {
+        setNum(h.halfWidth, coreHalfOf() * 2);
+        setNum(h.glowIntensity, cfg.glow.intensity * 0.8);
+        setNum(h.haloIntensity, cfg.glow.intensity * 0.4);
+      } else {
+        setNum(h.halfWidth, coreHalfOf() * Math.max(2, cfg.glow.width));
+        setNum(h.glowIntensity, cfg.glow.intensity * 0.8);
+        setNum(h.haloIntensity, cfg.glow.intensity * 0.4);
+      }
+    }
+    for (const b of branchMeshes) {
+      setNum(b.handles.halfWidth, coreHalfOf() * midThicknessScale() * 2);
+      setNum(b.handles.intensity, cfg.intensity * 0.8);
+      setNum(b.handles.profileMode, pMode);
+    }
+    for (const c of contactMeshes) {
+      setNum(c.handles.intensity, cfg.contact.intensity);
+      setNum(c.handles.halfSize, Math.max(cfg.contact.radius, 5e-3));
+    }
+  };
+  const coreHalfOf = () => Math.max(cfg.thickness, 5e-4) * 0.5;
+  const midThicknessScale = () => {
+    const [ts0, ts1] = cfg.branches.thicknessScale;
+    return (ts0 + ts1) * 0.5;
+  };
+  let disposed = false;
+  return {
+    root,
+    update,
+    updateLive,
+    backend: 'GPU' /* GPU */,
+    computeNode: pipeline.computeNode,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const m of mainMeshes) m.handles.material.dispose();
+      mainGeo.dispose();
+      for (const b of branchMeshes) {
+        b.handles.material.dispose();
+      }
+      for (const geo of branchGeos) geo.dispose();
+      for (const c of contactMeshes) c.handles.material.dispose();
+      contactGeo.dispose();
+      pipeline.dispose();
+    },
+  };
+}
+var MLS_MPM_WORKGROUP_SIZE = 64;
+var MLS_MPM_FIXED_POINT_MULTIPLIER = 1e7;
+var MLS_MPM_SUBSTEPS = 2;
+var MLS_MPM_MAX_GRID_DIM = 64;
+var MLS_MPM_PARTICLE_SPACING = 0.65;
+var MLS_MPM_CELL_WORDS = 4;
+var MLS_MPM_C_WORDS = 3;
+var MLS_MPM_DEFAULTS = {
+  stiffness: 3,
+  restDensity: 4,
+  dynamicViscosity: 0.1,
+  dt: 0.2,
+  gravity: -0.3,
+  sphereSize: 1.2,
+  fov: Math.PI / 4,
+  minBoxSize: 1,
+  boxSize: [40, 30, 60],
+};
+var MLS_MPM_WALL = {
+  min: 3,
+  maxOffset: 4,
+  stiffness: 0.3,
+  extrapolationK: 3,
+  clampLower: 1,
+  clampUpperOffset: 2,
+  cellBorder: 2,
+  cellMargin: 3,
+};
+var encodeFixedPoint = (value, multiplier = MLS_MPM_FIXED_POINT_MULTIPLIER) =>
+  Math.trunc(value * multiplier);
+var decodeFixedPoint = (encoded, multiplier = MLS_MPM_FIXED_POINT_MULTIPLIER) =>
+  encoded / multiplier;
+var computeMLSMPMGridDims = (boxSize) => [
+  Math.min(MLS_MPM_MAX_GRID_DIM, Math.ceil(boxSize[0])),
+  Math.min(MLS_MPM_MAX_GRID_DIM, Math.ceil(boxSize[1])),
+  Math.min(MLS_MPM_MAX_GRID_DIM, Math.ceil(boxSize[2])),
+];
+var computeMLSMPMGridCount = (boxSize) => {
+  const [nx, ny, nz] = computeMLSMPMGridDims(boxSize);
+  return nx * ny * nz;
+};
+var mlsmpmQuadraticWeights = (diff) => {
+  const minus = 0.5 - diff;
+  const plus = 0.5 + diff;
+  return [0.5 * minus * minus, 0.75 - diff * diff, 0.5 * plus * plus];
+};
+var mlsmpmCellIndex = (ix, iy, iz, ny, nz) => ix * ny * nz + iy * nz + iz;
+var mlsmpmCellWordBase = (ix, iy, iz, ny, nz) =>
+  mlsmpmCellIndex(ix, iy, iz, ny, nz) * MLS_MPM_CELL_WORDS;
+var initMLSMPMDambreak = (
+  boxSize,
+  capacity,
+  spacing = MLS_MPM_PARTICLE_SPACING,
+  random = Math.random
+) => {
+  const slots = Math.max(1, Math.floor(capacity));
+  const position = new Float32Array(slots * 4);
+  const velocity = new Float32Array(slots * 4);
+  const coefficients = new Float32Array(slots * MLS_MPM_C_WORDS * 4);
+  const yLimit = boxSize[1] * 0.8;
+  let count = 0;
+  for (let y = 0; y < yLimit && count < slots; y += spacing) {
+    for (let x = 3; x < boxSize[0] - 4 && count < slots; x += spacing) {
+      for (let z = 3; z < boxSize[2] / 2 && count < slots; z += spacing) {
+        const jitter = 2 * random();
+        const base = count * 4;
+        position[base] = x + jitter;
+        position[base + 1] = y + jitter;
+        position[base + 2] = z + jitter;
+        velocity[base] = 0;
+        velocity[base + 1] = 0;
+        velocity[base + 2] = 0;
+        const cBase = count * MLS_MPM_C_WORDS * 4;
+        coefficients[cBase] = 1;
+        coefficients[cBase + 5] = 1;
+        coefficients[cBase + 10] = 1;
+        count++;
+      }
+    }
+  }
+  return { count, position, velocity, coefficients };
+};
+var countMLSMPMDambreak = (boxSize, capacity, spacing = MLS_MPM_PARTICLE_SPACING) =>
+  initMLSMPMDambreak(boxSize, capacity, spacing, () => 0).count;
+function createMLSMPMBuffers(maxParticles, gridCount, shared) {
+  const particles = Math.max(1, Math.floor(maxParticles));
+  const cells = Math.max(1, Math.floor(gridCount));
+  const coefficients = new Float32Array(particles * MLS_MPM_C_WORDS * 4);
+  for (let i = 0; i < particles; i++) {
+    const base = i * MLS_MPM_C_WORDS * 4;
+    coefficients[base] = 1;
+    coefficients[base + 5] = 1;
+    coefficients[base + 10] = 1;
+  }
+  const zeroedCells = new StorageBufferAttribute(new Uint32Array(cells * MLS_MPM_CELL_WORDS), 1);
+  const freshPos = new StorageBufferAttribute(new Float32Array(particles * 4), 4);
+  const freshVel = new StorageBufferAttribute(new Float32Array(particles * 4), 4);
+  const coefficientBuffer = new StorageBufferAttribute(coefficients, 4);
+  return shared
+    ? {
+        position: shared.position,
+        velocity: shared.velocity,
+        coefficients: coefficientBuffer,
+        cells: zeroedCells,
+      }
+    : {
+        position: freshPos,
+        velocity: freshVel,
+        coefficients: coefficientBuffer,
+        cells: zeroedCells,
+      };
+}
+function resolveMLSMPMParams(config, boxSize) {
+  const [nx, ny, nz] = computeMLSMPMGridDims(boxSize);
+  return {
+    stiffness: config?.stiffness ?? MLS_MPM_DEFAULTS.stiffness,
+    restDensity: config?.restDensity ?? MLS_MPM_DEFAULTS.restDensity,
+    dynamicViscosity: config?.dynamicViscosity ?? MLS_MPM_DEFAULTS.dynamicViscosity,
+    dt: config?.dt ?? MLS_MPM_DEFAULTS.dt,
+    gravity: config?.gravity ?? MLS_MPM_DEFAULTS.gravity,
+    cellSize: config?.cellSize ?? 1,
+    gridSize: config?.gridSize ?? MLS_MPM_MAX_GRID_DIM,
+    sphereSize: config?.sphereSize ?? MLS_MPM_DEFAULTS.sphereSize,
+    boxSize: [boxSize[0], boxSize[1], boxSize[2]],
+    gridDims: [nx, ny, nz],
+    wallStiffness: MLS_MPM_WALL.stiffness,
+    extrapolationK: MLS_MPM_WALL.extrapolationK,
+  };
+}
+var STENCIL =
+  /* 27 triples */
+  Array.from({ length: 27 }, (_, n) => [Math.floor(n / 9), Math.floor(n / 3) % 3, n % 3]);
+var axisWeights = (diff) => {
+  const minus = float(0.5).sub(diff);
+  const plus = float(0.5).add(diff);
+  return [
+    minus.mul(minus).mul(float(0.5)),
+    float(0.75).sub(diff.mul(diff)),
+    plus.mul(plus).mul(float(0.5)),
+  ];
+};
+var stencilFrame = (pos) => {
+  const cellIdx = floor(pos);
+  const diff = pos.sub(cellIdx.add(float(0.5)));
+  return {
+    cellIdx,
+    wx: axisWeights(diff.x),
+    wy: axisWeights(diff.y),
+    wz: axisWeights(diff.z),
+  };
+};
+var stencilCell = (cellIdx, offset, wx, wy, wz) => {
+  const [gx, gy, gz] = offset;
+  return {
+    cx: cellIdx.x.add(float(gx - 1)),
+    cy: cellIdx.y.add(float(gy - 1)),
+    cz: cellIdx.z.add(float(gz - 1)),
+    weight: wx[gx].mul(wy[gy]).mul(wz[gz]),
+  };
+};
+var wordBase = (cx, cy, cz, ctx) =>
+  cx
+    .mul(float(ctx.ny * ctx.nz))
+    .add(cy.mul(float(ctx.nz)))
+    .add(cz)
+    .mul(float(MLS_MPM_CELL_WORDS));
+var cellDistance = (cx, cy, cz, pos) =>
+  vec3(cx.add(0.5).sub(pos.x), cy.add(0.5).sub(pos.y), cz.add(0.5).sub(pos.z));
+var decodeWord = (word, fp) => {
+  const value = float(word);
+  return value
+    .lessThan(float(2147483648))
+    .select(value, value.sub(float(4294967296)))
+    .div(fp);
+};
+var loadWord = (ctx, base, component) =>
+  decodeWord(atomicLoad(ctx.sCells.element(base.add(component))), ctx.fp);
+var addWord = (ctx, base, component, value) => {
+  atomicAdd(ctx.sCells.element(base.add(component)), uint(value.mul(ctx.fp)));
+};
+var createClearGridKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.gridCount)), () => {
+      const base = i.mul(float(MLS_MPM_CELL_WORDS));
+      atomicStore(ctx.sCells.element(base), uint(0));
+      atomicStore(ctx.sCells.element(base.add(1)), uint(0));
+      atomicStore(ctx.sCells.element(base.add(2)), uint(0));
+      atomicStore(ctx.sCells.element(base.add(3)), uint(0));
+    });
+  });
+var createP2G1Kernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const pos = ctx.sPos.element(i).xyz.toVar();
+      const vel = ctx.sVel.element(i).xyz.toVar();
+      const frame = stencilFrame(pos);
+      const cBase = i.mul(float(MLS_MPM_C_WORDS));
+      const c0 = ctx.sC.element(cBase).xyz;
+      const c1 = ctx.sC.element(cBase.add(1)).xyz;
+      const c2 = ctx.sC.element(cBase.add(2)).xyz;
+      for (const offset of STENCIL) {
+        const cell = stencilCell(frame.cellIdx, offset, frame.wx, frame.wy, frame.wz);
+        const d = cellDistance(cell.cx, cell.cy, cell.cz, pos);
+        const q = c0.mul(d.x).add(c1.mul(d.y)).add(c2.mul(d.z));
+        const add2 = vel.add(q).mul(cell.weight);
+        const base = wordBase(cell.cx, cell.cy, cell.cz, ctx);
+        addWord(ctx, base, 0, add2.x);
+        addWord(ctx, base, 1, add2.y);
+        addWord(ctx, base, 2, add2.z);
+        addWord(ctx, base, 3, cell.weight);
+      }
+    });
+  });
+var createP2G2Kernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const pos = ctx.sPos.element(i).xyz.toVar();
+      const frame = stencilFrame(pos);
+      const cBase = i.mul(float(MLS_MPM_C_WORDS));
+      const c0 = ctx.sC.element(cBase).xyz;
+      const c1 = ctx.sC.element(cBase.add(1)).xyz;
+      const c2 = ctx.sC.element(cBase.add(2)).xyz;
+      const density = float(0).toVar();
+      for (const offset of STENCIL) {
+        const cell = stencilCell(frame.cellIdx, offset, frame.wx, frame.wy, frame.wz);
+        const mass = loadWord(ctx, wordBase(cell.cx, cell.cy, cell.cz, ctx), 3);
+        density.assign(density.add(mass.mul(cell.weight)));
+      }
+      const volume = float(1).div(density);
+      const pressure = max(ctx.k.mul(pow(density.div(ctx.d0), float(5)).sub(float(1))), float(0));
+      const negP = float(-1).mul(pressure);
+      const s0 = ctx.mu.mul(c0.add(vec3(c0.x, c1.x, c2.x))).add(vec3(negP, float(0), float(0)));
+      const s1 = ctx.mu.mul(c1.add(vec3(c0.y, c1.y, c2.y))).add(vec3(float(0), negP, float(0)));
+      const s2 = ctx.mu.mul(c2.add(vec3(c0.z, c1.z, c2.z))).add(vec3(float(0), float(0), negP));
+      const eq16 = float(-4).mul(volume).mul(ctx.dt);
+      for (const offset of STENCIL) {
+        const cell = stencilCell(frame.cellIdx, offset, frame.wx, frame.wy, frame.wz);
+        const d = cellDistance(cell.cx, cell.cy, cell.cz, pos);
+        const momentum = s0.mul(d.x).add(s1.mul(d.y)).add(s2.mul(d.z)).mul(cell.weight).mul(eq16);
+        const base = wordBase(cell.cx, cell.cy, cell.cz, ctx);
+        addWord(ctx, base, 0, momentum.x);
+        addWord(ctx, base, 1, momentum.y);
+        addWord(ctx, base, 2, momentum.z);
+      }
+    });
+  });
+var createUpdateGridKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.gridCount)), () => {
+      const base = i.mul(float(MLS_MPM_CELL_WORDS));
+      const mass = decodeWord(atomicLoad(ctx.sCells.element(base.add(3))), ctx.fp);
+      If(mass.greaterThan(float(0)), () => {
+        const invMass = float(1).div(mass);
+        const vx = loadWord(ctx, base, 0).mul(invMass);
+        const vy = loadWord(ctx, base, 1).mul(invMass).add(ctx.gravity.mul(ctx.dt));
+        const vz = loadWord(ctx, base, 2).mul(invMass);
+        atomicStore(ctx.sCells.element(base), uint(vx.mul(ctx.fp)));
+        atomicStore(ctx.sCells.element(base.add(1)), uint(vy.mul(ctx.fp)));
+        atomicStore(ctx.sCells.element(base.add(2)), uint(vz.mul(ctx.fp)));
+        const fi = float(i);
+        const iz = fi.mod(float(ctx.nz));
+        const iy = fi.div(float(ctx.nz)).floor().mod(float(ctx.ny));
+        const ix = fi.div(float(ctx.ny * ctx.nz)).floor();
+        zeroWallCell(ctx, base, ix, ctx.rx);
+        zeroWallCell(ctx, base.add(1), iy, ctx.ry);
+        zeroWallCell(ctx, base.add(2), iz, ctx.rz);
+      });
+    });
+  });
+var zeroWallCell = (ctx, base, index, boxAxis) => {
+  If(index.lessThan(float(MLS_MPM_WALL.cellBorder)), () => {
+    atomicStore(ctx.sCells.element(base), uint(0));
+  });
+  If(index.greaterThan(boxAxis.sub(float(MLS_MPM_WALL.cellMargin))), () => {
+    atomicStore(ctx.sCells.element(base), uint(0));
+  });
+};
+var createG2PKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const pos = ctx.sPos.element(i).xyz.toVar();
+      const frame = stencilFrame(pos);
+      const cBase = i.mul(float(MLS_MPM_C_WORDS));
+      const vel = vec3(float(0), float(0), float(0)).toVar();
+      const b0 = vec3(float(0), float(0), float(0)).toVar();
+      const b1 = vec3(float(0), float(0), float(0)).toVar();
+      const b2 = vec3(float(0), float(0), float(0)).toVar();
+      for (const offset of STENCIL) {
+        const cell = stencilCell(frame.cellIdx, offset, frame.wx, frame.wy, frame.wz);
+        const d = cellDistance(cell.cx, cell.cy, cell.cz, pos);
+        const base = wordBase(cell.cx, cell.cy, cell.cz, ctx);
+        const gvx = loadWord(ctx, base, 0).mul(cell.weight);
+        const gvy = loadWord(ctx, base, 1).mul(cell.weight);
+        const gvz = loadWord(ctx, base, 2).mul(cell.weight);
+        vel.assign(vel.add(vec3(gvx, gvy, gvz)));
+        b0.assign(b0.add(vec3(gvx.mul(d.x), gvy.mul(d.x), gvz.mul(d.x))));
+        b1.assign(b1.add(vec3(gvx.mul(d.y), gvy.mul(d.y), gvz.mul(d.y))));
+        b2.assign(b2.add(vec3(gvx.mul(d.z), gvy.mul(d.z), gvz.mul(d.z))));
+      }
+      const four = float(4);
+      ctx.sC.element(cBase).assign(vec4(b0.mul(four), float(0)));
+      ctx.sC.element(cBase.add(1)).assign(vec4(b1.mul(four), float(0)));
+      ctx.sC.element(cBase.add(2)).assign(vec4(b2.mul(four), float(0)));
+      const next = pos.add(vel.mul(ctx.dt));
+      const lower = float(MLS_MPM_WALL.clampLower);
+      const clamped = vec3(
+        min(max(next.x, lower), ctx.rx.sub(float(MLS_MPM_WALL.clampUpperOffset))),
+        min(max(next.y, lower), ctx.ry.sub(float(MLS_MPM_WALL.clampUpperOffset))),
+        min(max(next.z, lower), ctx.rz.sub(float(MLS_MPM_WALL.clampUpperOffset)))
+      );
+      pos.assign(clamped);
+      ctx.sPos.element(i).assign(vec4(clamped, float(0)));
+      const step2 = ctx.dt.mul(ctx.extrapolationK);
+      const ex = clamped.add(vel.mul(step2));
+      const minWall = float(MLS_MPM_WALL.min);
+      const maxOffset = float(MLS_MPM_WALL.maxOffset);
+      const newVel = vel.toVar();
+      If(ex.x.lessThan(minWall), () => {
+        newVel.x.addAssign(ctx.wallStiffness.mul(minWall.sub(ex.x)));
+      });
+      If(ex.x.greaterThan(ctx.rx.sub(maxOffset)), () => {
+        newVel.x.addAssign(ctx.wallStiffness.mul(ctx.rx.sub(maxOffset).sub(ex.x)));
+      });
+      If(ex.y.lessThan(minWall), () => {
+        newVel.y.addAssign(ctx.wallStiffness.mul(minWall.sub(ex.y)));
+      });
+      If(ex.y.greaterThan(ctx.ry.sub(maxOffset)), () => {
+        newVel.y.addAssign(ctx.wallStiffness.mul(ctx.ry.sub(maxOffset).sub(ex.y)));
+      });
+      If(ex.z.lessThan(minWall), () => {
+        newVel.z.addAssign(ctx.wallStiffness.mul(minWall.sub(ex.z)));
+      });
+      If(ex.z.greaterThan(ctx.rz.sub(maxOffset)), () => {
+        newVel.z.addAssign(ctx.wallStiffness.mul(ctx.rz.sub(maxOffset).sub(ex.z)));
+      });
+      ctx.sVel.element(i).assign(vec4(newVel, float(0)));
+    });
+  });
+var layout = (name, storages, uniforms) => ({
+  name,
+  storageBindings: storages.length,
+  uniformBindings: uniforms.length,
+});
+function createMLSMPMPipeline(maxParticles, params, realBox, shared) {
+  const count = Math.max(1, Math.floor(maxParticles));
+  const [nx, ny, nz] = params.gridDims;
+  const gridCount = nx * ny * nz;
+  const box = realBox ?? params.boxSize;
+  const buffers = createMLSMPMBuffers(count, gridCount, shared);
+  const uBoxWidthRatio = uniform(params.boxSize[2] > 0 ? box[2] / params.boxSize[2] : 1);
+  const sPos = storage(buffers.position, 'vec4', count);
+  const sVel = storage(buffers.velocity, 'vec4', count);
+  const sC = storage(buffers.coefficients, 'vec4', count * MLS_MPM_C_WORDS);
+  const sCells = storage(buffers.cells, 'uint', gridCount * MLS_MPM_CELL_WORDS).toAtomic();
+  const ctx = {
+    count,
+    gridCount,
+    ny,
+    nz,
+    sPos,
+    sVel,
+    sC,
+    sCells,
+    fp: float(MLS_MPM_FIXED_POINT_MULTIPLIER),
+    k: float(params.stiffness),
+    d0: float(params.restDensity),
+    mu: float(params.dynamicViscosity),
+    dt: float(params.dt),
+    gravity: float(params.gravity),
+    wallStiffness: float(params.wallStiffness),
+    extrapolationK: float(params.extrapolationK),
+    rx: float(box[0]),
+    ry: float(box[1]),
+    // Animated `z` extent = init extent * `uBoxWidthRatio` (`changeBoxSize`).
+    rz: float(params.boxSize[2]).mul(uBoxWidthRatio),
+  };
+  const clearGrid = createClearGridKernel(ctx);
+  const p2g1 = createP2G1Kernel(ctx);
+  const p2g2 = createP2G2Kernel(ctx);
+  const updateGrid = createUpdateGridKernel(ctx);
+  const g2p = createG2PKernel(ctx);
+  const passNames = [];
+  const computeNodes = [];
+  const push = (name, node) => {
+    passNames.push(name);
+    computeNodes.push(node);
+  };
+  for (let step2 = 0; step2 < MLS_MPM_SUBSTEPS; step2++) {
+    const suffix = `_${step2 + 1}`;
+    push(`clearGrid${suffix}`, compute(clearGrid(), gridCount));
+    push(`p2g1${suffix}`, compute(p2g1(), count));
+    push(`p2g2${suffix}`, compute(p2g2(), count));
+    push(`updateGrid${suffix}`, compute(updateGrid(), gridCount));
+    push(`g2p${suffix}`, compute(g2p(), count));
+  }
+  const pool = [sPos, sVel, sC, sCells];
+  return {
+    computeNodes,
+    passNames,
+    passLayouts: passNames.map((name) => layout(name, pool, [])),
+    buffers,
+    gridCount,
+    numParticles: count,
+    uniforms: { boxWidthRatio: uBoxWidthRatio },
+  };
+}
+var SPH_WORKGROUP_SIZE = 64;
+var SPH_SUBSTEPS = 2;
+var SPH_DEFAULT_KERNEL_RADIUS = 0.07;
+var SPH_CELL_SIZE_FACTOR = 1;
+var SPH_SENTINEL_CELLS = 4;
+var SPH_MAX_HALF_BOX = 2;
+var SPH_WALL_STIFFNESS = 8e3;
+var SPH_R2_EPSILON = 1e-64;
+var SPH_SCAN_CHUNK = SPH_WORKGROUP_SIZE;
+var SPH_SCAN_STAGES = 6;
+var SPH_SLAB_RADIUS = 1;
+var SPH_DEFAULTS = {
+  kernelRadius: SPH_DEFAULT_KERNEL_RADIUS,
+  mass: 1,
+  restDensity: 15e3,
+  stiffness: 20,
+  nearStiffness: 1,
+  viscosity: 100,
+  dt: 6e-3,
+  gravity: -9.8,
+  sphereSize: 0.08,
+  fov: Math.PI / 4,
+  halfBoxSize: [1, 2, 1],
+};
+var SPH_LATTICE_FACTOR = 0.5;
+var SPH_LATTICE_MARGIN = 0.95;
+var computeSPHGridDims = (kernelRadius = SPH_DEFAULT_KERNEL_RADIUS, halfMax = SPH_MAX_HALF_BOX) => {
+  const cellSize = kernelRadius * SPH_CELL_SIZE_FACTOR;
+  const dims = Math.ceil((2 * halfMax + SPH_SENTINEL_CELLS * cellSize) / cellSize);
+  return [dims, dims, dims];
+};
+var computeSPHGridCount = (kernelRadius, halfMax) => {
+  const [x, y, z] = computeSPHGridDims(kernelRadius, halfMax);
+  return x * y * z;
+};
+var computeSPHOffset = (kernelRadius = SPH_DEFAULT_KERNEL_RADIUS) =>
+  (SPH_SENTINEL_CELLS * kernelRadius * SPH_CELL_SIZE_FACTOR) / 2;
+var sphCellId = (xi, yi, zi, xGrids, yGrids) => xi + yi * xGrids + zi * xGrids * yGrids;
+var computeSPHScanBlocks = (cellCount) => Math.ceil(Math.max(1, cellCount) / SPH_SCAN_CHUNK);
+var computeSPHScanInnerSteps = (blockCount) => Math.ceil(Math.max(1, blockCount) / SPH_SCAN_CHUNK);
+var sphKernelPowers = (kernelRadius = SPH_DEFAULT_KERNEL_RADIUS) => ({
+  pow2: Math.pow(kernelRadius, 2),
+  pow5: Math.pow(kernelRadius, 5),
+  pow6: Math.pow(kernelRadius, 6),
+  pow9: Math.pow(kernelRadius, 9),
+});
+var sphDensityKernelScale = (powers) => 315 / (64 * Math.PI * powers.pow9);
+var sphNearDensityKernelScale = (powers) => 15 / (Math.PI * powers.pow6);
+var sphDensityGradientScale = (powers) => 45 / (Math.PI * powers.pow6);
+var sphViscosityLaplacianScale = (powers) => 45 / (Math.PI * powers.pow6);
+var initSPHDambreak = (
+  halfBoxSize,
+  capacity,
+  kernelRadius = SPH_DEFAULT_KERNEL_RADIUS,
+  random = Math.random
+) => {
+  const slots = Math.max(1, Math.floor(capacity));
+  const position = new Float32Array(slots * 4);
+  const velocity = new Float32Array(slots * 4);
+  const forceDensity = new Float32Array(slots * 4);
+  const step2 = SPH_LATTICE_FACTOR * kernelRadius;
+  const mx = SPH_LATTICE_MARGIN * halfBoxSize[0];
+  const my = SPH_LATTICE_MARGIN * halfBoxSize[1];
+  const mz = SPH_LATTICE_MARGIN * halfBoxSize[2];
+  let count = 0;
+  for (let y = -my; count < slots; y += step2) {
+    for (let x = -mx; x < mx && count < slots; x += step2) {
+      for (let z = -mz; z < 0 && count < slots; z += step2) {
+        const jitter = 1e-3 * random();
+        const base = count * 4;
+        position[base] = x + jitter;
+        position[base + 1] = y + jitter;
+        position[base + 2] = z + jitter;
+        count++;
+      }
+    }
+  }
+  return { count, position, velocity, forceDensity };
+};
+var countSPHDambreak = (halfBoxSize, capacity, kernelRadius) =>
+  initSPHDambreak(halfBoxSize, capacity, kernelRadius, () => 0).count;
+function createSPHBuffers(maxParticles, gridCount, shared) {
+  const particles = Math.max(1, Math.floor(maxParticles));
+  const cells = Math.max(1, Math.floor(gridCount));
+  const blocks = computeSPHScanBlocks(cells + 1);
+  const particleVec4 = () => new StorageBufferAttribute(new Float32Array(particles * 4), 4);
+  const pos = shared ? shared.position : particleVec4();
+  const vel = shared ? shared.velocity : particleVec4();
+  return {
+    position: pos,
+    velocity: vel,
+    forceDensity: particleVec4(),
+    sortedPosition: particleVec4(),
+    sortedVelocity: particleVec4(),
+    sortedForceDensity: particleVec4(),
+    cellCounts: new StorageBufferAttribute(new Uint32Array(cells), 1),
+    prefixSums: new StorageBufferAttribute(new Float32Array(cells + 1), 1),
+    particleCellOffsets: new StorageBufferAttribute(new Uint32Array(particles), 1),
+    blockPartials: new StorageBufferAttribute(new Float32Array(blocks), 1),
+    blockInclusive: new StorageBufferAttribute(new Float32Array(blocks), 1),
+    blockOffsets: new StorageBufferAttribute(new Float32Array(blocks), 1),
+  };
+}
+function resolveSPHParams(config, halfBoxSize, realHalfBox) {
+  const kernelRadius = config?.kernelRadius ?? SPH_DEFAULTS.kernelRadius;
+  const [nx, ny, nz] = computeSPHGridDims(kernelRadius, SPH_MAX_HALF_BOX);
+  const powers = sphKernelPowers(kernelRadius);
+  const box = realHalfBox ?? halfBoxSize;
+  return {
+    kernelRadius,
+    mass: config?.mass ?? SPH_DEFAULTS.mass,
+    restDensity: config?.restDensity ?? SPH_DEFAULTS.restDensity,
+    stiffness: config?.stiffness ?? SPH_DEFAULTS.stiffness,
+    nearStiffness: config?.nearStiffness ?? SPH_DEFAULTS.nearStiffness,
+    viscosity: config?.viscosity ?? SPH_DEFAULTS.viscosity,
+    dt: config?.dt ?? SPH_DEFAULTS.dt,
+    gravity: config?.gravity ?? SPH_DEFAULTS.gravity,
+    sphereSize: config?.sphereSize ?? SPH_DEFAULTS.sphereSize,
+    halfBoxSize: [halfBoxSize[0], halfBoxSize[1], halfBoxSize[2]],
+    realHalfBox: [box[0], box[1], box[2]],
+    cellSize: kernelRadius * SPH_CELL_SIZE_FACTOR,
+    offset: computeSPHOffset(kernelRadius),
+    gridDims: [nx, ny, nz],
+    powers,
+    densityScale: sphDensityKernelScale(powers),
+    nearDensityScale: sphNearDensityKernelScale(powers),
+    gradientScale: sphDensityGradientScale(powers),
+    laplacianScale: sphViscosityLaplacianScale(powers),
+  };
+}
+var cellCoords = (pos, ctx) =>
+  floor(
+    pos
+      .add(vec3(ctx.halfX, ctx.halfY, ctx.halfZ))
+      .add(ctx.offset)
+      .mul(ctx.cellSizeInv)
+  );
+var cellIdOf = (coords, ctx) =>
+  coords.x.add(coords.y.mul(float(ctx.xGrids))).add(coords.z.mul(float(ctx.xGrids * ctx.yGrids)));
+var insideLattice = (coords, ctx) =>
+  coords.x
+    .greaterThanEqual(float(0))
+    .and(coords.y.greaterThanEqual(float(0)))
+    .and(coords.z.greaterThanEqual(float(0)))
+    .and(coords.x.lessThan(float(ctx.xGrids)))
+    .and(coords.y.lessThan(float(ctx.yGrids)))
+    .and(coords.z.lessThan(float(ctx.zGrids)));
+var slabExtent = (coord, grids) => min(coord, float(grids).sub(coord).sub(float(1)));
+var cellCountAt = (ctx, index) => float(atomicLoad(ctx.sCells.element(index)));
+var slabTermIds = (coords, dx, dy, dz, ctx) => {
+  const xg = float(ctx.xGrids);
+  const yg = float(ctx.yGrids);
+  const xy = xg.mul(yg);
+  const first = coords.x.sub(dx).add(coords.y.sub(dy).mul(xg)).add(coords.z.sub(dz).mul(xy));
+  const last = coords.x.add(dx).add(coords.y.add(dy).mul(xg)).add(coords.z.add(dz).mul(xy));
+  return { first, last };
+};
+var forEachSlabCell = (coords, ex, ey, ez, ctx, body) => {
+  for (let dz = 0; dz < 3; dz++) {
+    for (let dy = 0; dy < 3; dy++) {
+      for (let dx = 0; dx < 3; dx++) {
+        const kx = float(dx);
+        const ky = float(dy);
+        const kz = float(dz);
+        const ids = slabTermIds(coords, min(kx, ex), min(ky, ey), min(kz, ez), ctx);
+        const inRange = kx.lessThanEqual(ex).and(ky.lessThanEqual(ey).and(kz.lessThanEqual(ez)));
+        If(inRange, () => {
+          body(ctx.sPrefix.element(ids.first), ctx.sPrefix.element(ids.last.add(1)));
+        });
+      }
+    }
+  }
+};
+var createGridClearKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.gridCount)), () => {
+      atomicStore(ctx.sCells.element(i), uint(0));
+    });
+  });
+var createGridBuildKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const coords = cellCoords(ctx.sPos.element(i).xyz, ctx);
+      If(insideLattice(coords, ctx), () => {
+        const old = atomicAdd(ctx.sCells.element(cellIdOf(coords, ctx)), uint(1));
+        ctx.sOffsets.element(i).assign(old);
+      });
+    });
+  });
+var createScanPartialsKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.scanBlocks)), () => {
+      const total = float(0).toVar();
+      for (let k = 0; k < SPH_SCAN_CHUNK; k++) {
+        const idx = float(i).mul(float(SPH_SCAN_CHUNK)).add(float(k));
+        If(idx.lessThan(float(ctx.gridCount)), () => {
+          total.assign(total.add(cellCountAt(ctx, idx)));
+        });
+      }
+      ctx.sPartials.element(i).assign(total);
+    });
+  });
+var createBlockScanKernel = (ctx) =>
+  Fn(() => {
+    const lane = invocationLocalIndex;
+    const steps = float(ctx.scanSteps);
+    const laneTotal = float(0).toVar();
+    for (let k = 0; k < ctx.scanSteps; k++) {
+      const idx = float(lane).mul(steps).add(float(k));
+      If(idx.lessThan(float(ctx.scanBlocks)), () => {
+        laneTotal.assign(laneTotal.add(ctx.sPartials.element(idx)));
+        ctx.sInclusive.element(idx).assign(laneTotal);
+      });
+    }
+    const a = workgroupArray('float', SPH_SCAN_CHUNK);
+    const b = workgroupArray('float', SPH_SCAN_CHUNK);
+    a.element(lane).assign(laneTotal);
+    workgroupBarrier();
+    let src = a;
+    let dst = b;
+    for (let stage = 0; stage < SPH_SCAN_STAGES; stage++) {
+      const s = float(Math.pow(2, stage));
+      If(float(lane).greaterThanEqual(s), () => {
+        dst
+          .element(lane)
+          .assign(add(float(src.element(lane)), float(src.element(float(lane).sub(s)))));
+      });
+      If(float(lane).lessThan(s), () => {
+        dst.element(lane).assign(src.element(lane));
+      });
+      workgroupBarrier();
+      const next = dst;
+      dst = src;
+      src = next;
+    }
+    const exclusive = float(0).toVar();
+    exclusive.assign(sub(float(src.element(lane)), laneTotal));
+    for (let k = 0; k < ctx.scanSteps; k++) {
+      const idx = float(lane).mul(steps).add(float(k));
+      If(idx.lessThan(float(ctx.scanBlocks)), () => {
+        ctx.sBlockOffsets
+          .element(idx)
+          .assign(ctx.sInclusive.element(idx).sub(ctx.sPartials.element(idx)).add(exclusive));
+      });
+    }
+  });
+var createScanApplyKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.scanBlocks)), () => {
+      const base = float(i).mul(float(SPH_SCAN_CHUNK));
+      const blockStart = ctx.sBlockOffsets.element(i);
+      const running = float(0).toVar();
+      ctx.sPrefix.element(base).assign(blockStart);
+      for (let k = 0; k < SPH_SCAN_CHUNK; k++) {
+        const idx = base.add(float(k));
+        If(idx.lessThan(float(ctx.gridCount + 1)), () => {
+          If(idx.lessThan(float(ctx.gridCount)), () => {
+            running.assign(running.add(cellCountAt(ctx, idx)));
+          });
+          ctx.sPrefix.element(idx.add(1)).assign(blockStart.add(running));
+        });
+      }
+    });
+  });
+var reorderBody = (ctx, writeFields) => {
+  const i = instanceIndex;
+  If(float(i).lessThan(float(ctx.count)), () => {
+    const coords = cellCoords(ctx.sPos.element(i).xyz, ctx);
+    If(insideLattice(coords, ctx), () => {
+      const target = ctx.sPrefix
+        .element(cellIdOf(coords, ctx).add(1))
+        .sub(ctx.sOffsets.element(i))
+        .sub(float(1));
+      If(target.lessThan(float(ctx.count)), () => {
+        writeFields(target);
+      });
+    });
+  });
+};
+var createReorderPositionKernel = (ctx) =>
+  Fn(() => {
+    reorderBody(ctx, (target) => {
+      const i = instanceIndex;
+      ctx.sSortedPos.element(target).assign(ctx.sPos.element(i));
+      ctx.sSortedVel.element(target).assign(ctx.sVel.element(i));
+    });
+  });
+var createReorderForceKernel = (ctx) =>
+  Fn(() => {
+    reorderBody(ctx, (target) => {
+      ctx.sSortedForce.element(target).assign(ctx.sForce.element(instanceIndex));
+    });
+  });
+var createDensityKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const pos = ctx.sPos.element(i).xyz;
+      const coords = cellCoords(pos, ctx);
+      If(insideLattice(coords, ctx), () => {
+        const density = float(0).toVar();
+        const nearDensity = float(0).toVar();
+        const ex = slabExtent(coords.x, ctx.xGrids);
+        const ey = slabExtent(coords.y, ctx.yGrids);
+        const ez = slabExtent(coords.z, ctx.zGrids);
+        forEachSlabCell(coords, ex, ey, ez, ctx, (start, end) => {
+          Loop(end.sub(start), ({ i: j }) => {
+            const other = ctx.sSortedPos.element(start.add(j)).xyz;
+            const delta = pos.sub(other);
+            const r2 = dot(delta, delta);
+            If(r2.lessThan(ctx.radiusPow2), () => {
+              const r = sqrt(r2);
+              const gap = ctx.radius.sub(r);
+              density.assign(
+                density.add(ctx.mass.mul(ctx.densityScale).mul(cube(ctx.radiusPow2.sub(r2))))
+              );
+              nearDensity.assign(
+                nearDensity.add(ctx.mass.mul(ctx.nearDensityScale).mul(cube(gap)))
+              );
+            });
+          });
+        });
+        const posVec = ctx.sPos.element(i).toVar();
+        posVec.w.assign(nearDensity);
+        ctx.sPos.element(i).assign(posVec);
+        const forceVec = ctx.sForce.element(i).toVar();
+        forceVec.w.assign(density);
+        ctx.sForce.element(i).assign(forceVec);
+      });
+    });
+  });
+var createForceKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const posVec = ctx.sPos.element(i);
+      const posI = posVec.xyz;
+      const velI = ctx.sVel.element(i).xyz;
+      const densityI = ctx.sForce.element(i).w;
+      const nearI = posVec.w;
+      const coords = cellCoords(posI, ctx);
+      const fPress = vec3(float(0), float(0), float(0)).toVar();
+      const fVisc = vec3(float(0), float(0), float(0)).toVar();
+      If(insideLattice(coords, ctx), () => {
+        const ex = slabExtent(coords.x, ctx.xGrids);
+        const ey = slabExtent(coords.y, ctx.yGrids);
+        const ez = slabExtent(coords.z, ctx.zGrids);
+        forEachSlabCell(coords, ex, ey, ez, ctx, (start, end) => {
+          Loop(end.sub(start), ({ i: j }) => {
+            const slot = start.add(j);
+            const densityJ = ctx.sSortedForce.element(slot).w;
+            const posJ = ctx.sSortedPos.element(slot).xyz;
+            const nearJ = ctx.sSortedPos.element(slot).w;
+            const velJ = ctx.sSortedVel.element(slot).xyz;
+            const delta = posI.sub(posJ);
+            const r2 = dot(delta, delta);
+            If(densityJ.greaterThan(float(0)).and(nearJ.greaterThan(float(0))), () => {
+              If(r2.greaterThan(ctx.r2Epsilon).and(r2.lessThan(ctx.radiusPow2)), () => {
+                const r = sqrt(r2);
+                const gap = ctx.radius.sub(r);
+                const pressureI = ctx.stiffness.mul(densityI.sub(ctx.restDensity));
+                const pressureJ = ctx.stiffness.mul(densityJ.sub(ctx.restDensity));
+                const nearPressureI = ctx.nearStiffness.mul(nearI);
+                const nearPressureJ = ctx.nearStiffness.mul(nearJ);
+                const dir = normalize(posJ.sub(posI));
+                const grad = ctx.gradientScale.mul(gap.mul(gap));
+                const laplacian = ctx.laplacianScale.mul(gap);
+                const shared = float(0.5).mul(pressureI.add(pressureJ));
+                const nearShared = float(0.5).mul(nearPressureI.add(nearPressureJ));
+                const pressTerm = dir.mul(shared.mul(grad).mul(ctx.mass).div(densityJ)).negate();
+                const nearTerm = dir.mul(nearShared.mul(grad).mul(ctx.mass).div(nearJ)).negate();
+                const viscTerm = velJ.sub(velI).mul(laplacian.mul(ctx.mass).div(densityJ));
+                fPress.assign(fPress.add(pressTerm).add(nearTerm));
+                fVisc.assign(fVisc.add(viscTerm));
+              });
+            });
+          });
+        });
+      });
+      const gravityVec = vec3(float(0), ctx.gravity.mul(densityI), float(0));
+      const force = fPress.add(fVisc.mul(ctx.viscosity)).add(gravityVec);
+      ctx.sForce.element(i).assign(vec4(force.x, force.y, force.z, densityI));
+    });
+  });
+var createIntegrateKernel = (ctx) =>
+  Fn(() => {
+    const i = instanceIndex;
+    If(float(i).lessThan(float(ctx.count)), () => {
+      const posVec = ctx.sPos.element(i).toVar();
+      const forceVec = ctx.sForce.element(i);
+      const density = forceVec.w;
+      If(density.notEqual(float(0)), () => {
+        const accel = vec4(
+          forceVec.x.div(density),
+          forceVec.y.div(density),
+          forceVec.z.div(density),
+          float(0)
+        ).toVar();
+        const wall = float(SPH_WALL_STIFFNESS);
+        signedWall(accel.x, wall, ctx.halfX.sub(posVec.x));
+        signedWall(accel.x, wall, ctx.halfX.add(posVec.x));
+        signedWall(accel.y, wall, ctx.halfY.sub(posVec.y));
+        signedWall(accel.y, wall, ctx.halfY.add(posVec.y));
+        signedWall(accel.z, wall, ctx.halfZ.sub(posVec.z));
+        signedWall(accel.z, wall, ctx.halfZ.add(posVec.z));
+        const velVec = ctx.sVel.element(i).toVar();
+        velVec.x.addAssign(accel.x.mul(ctx.dt));
+        velVec.y.addAssign(accel.y.mul(ctx.dt));
+        velVec.z.addAssign(accel.z.mul(ctx.dt));
+        posVec.x.addAssign(velVec.x.mul(ctx.dt));
+        posVec.y.addAssign(velVec.y.mul(ctx.dt));
+        posVec.z.addAssign(velVec.z.mul(ctx.dt));
+        ctx.sVel.element(i).assign(velVec);
+        ctx.sPos.element(i).assign(posVec);
+      });
+    });
+  });
+var signedWall = (axis, stiffness, distance) => {
+  axis.addAssign(stiffness.mul(min(distance, float(0))));
+};
+var cube = (n) => n.mul(n).mul(n);
+var layout2 = (name, storages, uniforms) => ({
+  name,
+  storageBindings: storages.length,
+  uniformBindings: uniforms.length,
+});
+function createSPHPipeline(maxParticles, params, realHalfBox, shared) {
+  const count = Math.max(1, Math.floor(maxParticles));
+  const [nx, ny, nz] = params.gridDims;
+  const gridCount = nx * ny * nz;
+  const scanBlocks = computeSPHScanBlocks(gridCount + 1);
+  const scanSteps = computeSPHScanInnerSteps(scanBlocks);
+  const box = realHalfBox ?? params.realHalfBox;
+  const buffers = createSPHBuffers(count, gridCount, shared);
+  const uBoxWidthRatio = uniform(params.halfBoxSize[2] > 0 ? box[2] / params.halfBoxSize[2] : 1);
+  const sPos = storage(buffers.position, 'vec4', count);
+  const sVel = storage(buffers.velocity, 'vec4', count);
+  const sForce = storage(buffers.forceDensity, 'vec4', count);
+  const sSortedPos = storage(buffers.sortedPosition, 'vec4', count);
+  const sSortedVel = storage(buffers.sortedVelocity, 'vec4', count);
+  const sSortedForce = storage(buffers.sortedForceDensity, 'vec4', count);
+  const sCells = storage(buffers.cellCounts, 'uint', gridCount).toAtomic();
+  const sPrefix = storage(buffers.prefixSums, 'float', gridCount + 1);
+  const sOffsets = storage(buffers.particleCellOffsets, 'uint', count);
+  const sPartials = storage(buffers.blockPartials, 'float', scanBlocks);
+  const sInclusive = storage(buffers.blockInclusive, 'float', scanBlocks);
+  const sBlockOffsets = storage(buffers.blockOffsets, 'float', scanBlocks);
+  const ctx = {
+    count,
+    gridCount,
+    xGrids: nx,
+    yGrids: ny,
+    zGrids: nz,
+    scanBlocks,
+    scanSteps,
+    sPos,
+    sVel,
+    sForce,
+    sSortedPos,
+    sSortedVel,
+    sSortedForce,
+    sCells,
+    sPrefix,
+    sOffsets,
+    sPartials,
+    sInclusive,
+    sBlockOffsets,
+    cellSizeInv: float(1 / params.cellSize),
+    offset: float(params.offset),
+    // One half-max set feeds both the lattice coordinates and the walls
+    // (`xHalfMax` / `yHalfMax` / `zHalfMax` of the reference params block);
+    // the `z` axis carries the animated `boxWidthRatio` squeeze.
+    halfX: float(box[0]),
+    halfY: float(box[1]),
+    halfZ: float(params.halfBoxSize[2]).mul(uBoxWidthRatio),
+    radius: float(params.kernelRadius),
+    radiusPow2: float(params.powers.pow2),
+    r2Epsilon: float(SPH_R2_EPSILON),
+    mass: float(params.mass),
+    stiffness: float(params.stiffness),
+    nearStiffness: float(params.nearStiffness),
+    restDensity: float(params.restDensity),
+    viscosity: float(params.viscosity),
+    dt: float(params.dt),
+    gravity: float(params.gravity),
+    densityScale: float(params.densityScale),
+    nearDensityScale: float(params.nearDensityScale),
+    gradientScale: float(params.gradientScale),
+    laplacianScale: float(params.laplacianScale),
+    pool: [
+      sPos,
+      sVel,
+      sForce,
+      sSortedPos,
+      sSortedVel,
+      sSortedForce,
+      sCells,
+      sPrefix,
+      sOffsets,
+      sPartials,
+      sInclusive,
+      sBlockOffsets,
+    ],
+  };
+  const subsets = {
+    gridClear: [sCells],
+    gridBuild: [sPos, sCells, sOffsets],
+    scanPartials: [sCells, sPartials],
+    scanBlocks: [sPartials, sInclusive, sBlockOffsets],
+    scanApply: [sCells, sPrefix, sBlockOffsets],
+    reorderPosition: [sPos, sVel, sSortedPos, sSortedVel, sPrefix, sOffsets],
+    reorderForce: [sPos, sForce, sSortedForce, sPrefix, sOffsets],
+    density: [sPos, sForce, sSortedPos, sPrefix],
+    force: [sPos, sVel, sForce, sSortedPos, sSortedVel, sSortedForce, sPrefix],
+    integrate: [sPos, sVel, sForce],
+  };
+  const clear = createGridClearKernel(ctx);
+  const build = createGridBuildKernel(ctx);
+  const scan1 = createScanPartialsKernel(ctx);
+  const scan2 = createBlockScanKernel(ctx);
+  const scan3 = createScanApplyKernel(ctx);
+  const reorderPos = createReorderPositionKernel(ctx);
+  const reorderForce = createReorderForceKernel(ctx);
+  const density = createDensityKernel(ctx);
+  const force = createForceKernel(ctx);
+  const integrate = createIntegrateKernel(ctx);
+  const passNames = [];
+  const computeNodes = [];
+  const passLayouts = [];
+  const push = (name, node, subset) => {
+    passNames.push(name);
+    computeNodes.push(node);
+    passLayouts.push(layout2(name, subset === 'pool' ? ctx.pool : subsets[subset], []));
+  };
+  for (let step2 = 0; step2 < SPH_SUBSTEPS; step2++) {
+    const suffix = `_${step2 + 1}`;
+    push(`gridClear${suffix}`, compute(clear(), gridCount), 'gridClear');
+    push(`gridBuild${suffix}`, compute(build(), count), 'gridBuild');
+    push('scanPartials', compute(scan1(), scanBlocks), 'scanPartials');
+    push('scanBlocks', compute(scan2(), SPH_SCAN_CHUNK), 'scanBlocks');
+    push('scanApply', compute(scan3(), scanBlocks), 'scanApply');
+    push(`reorderPosition${suffix}`, compute(reorderPos(), count), 'reorderPosition');
+    push(`reorderForce${suffix}`, compute(reorderForce(), count), 'reorderForce');
+    push(`density${suffix}`, compute(density(), count), 'density');
+    push(`reorderPositionB${suffix}`, compute(reorderPos(), count), 'reorderPosition');
+    push(`reorderForceB${suffix}`, compute(reorderForce(), count), 'reorderForce');
+    push(`force${suffix}`, compute(force(), count), 'force');
+    push(`integrate${suffix}`, compute(integrate(), count), 'integrate');
+  }
+  return {
+    computeNodes,
+    passNames,
+    passLayouts,
+    buffers,
+    gridCount,
+    numParticles: count,
+    uniforms: { boxWidthRatio: uBoxWidthRatio },
+  };
+}
+
+// src/js/effects/three-particles/three-particles-constants.ts
+var POINT_SIZE_SCALE = 100;
+var ALPHA_DISCARD_THRESHOLD = 1e-3;
+
+// src/js/effects/three-particles/webgpu/tsl-fluid-metaball-material.ts
+function createFluidTSLMaterial(
+  sharedUniforms,
+  rendererConfig,
+  gpuCompute = false,
+  stretchFactor = 1,
+  absorption = 1.44,
+  ior = 1.33
+) {
+  const u = createParticleUniforms(sharedUniforms);
+  const uViewportHeight = uniform(
+    typeof sharedUniforms.viewportHeight?.value === 'number'
+      ? sharedUniforms.viewportHeight.value
+      : 1
+  );
+  sharedUniforms.viewportHeight = uViewportHeight;
+  const uStretch = uniform(float(stretchFactor));
+  const uAbsorbK = uniform(float(absorption * 1.442695));
+  const f0 = Math.pow(ior - 1, 2) / Math.pow(ior + 1, 2);
+  const uF0 = uniform(float(f0));
+  const aInstanceOffset = attribute('instanceOffset');
+  const aColor = attribute('instanceColor');
+  const aVelocity = attribute('instanceVelocity');
+  const aParticleState = gpuCompute ? attribute('instanceParticleState') : null;
+  const aStartValues = gpuCompute ? attribute('instanceStartValues') : null;
+  const aSize = gpuCompute ? null : attribute('instanceSize');
+  const aLifetime = gpuCompute ? null : attribute('instanceLifetime');
+  const aStartLifetime = gpuCompute ? null : attribute('instanceStartLifetime');
+  const aStartFrame = gpuCompute ? null : attribute('instanceStartFrame');
+  const vColor = varyingProperty('vec4', 'vColor');
+  const vLifetime = varyingProperty('float', 'vLifetime');
+  const vStartLifetime = varyingProperty('float', 'vStartLifetime');
+  const vStartFrame = varyingProperty('float', 'vStartFrame');
+  const vUv = varyingProperty('vec2', 'vUv');
+  const vVelXY = varyingProperty('vec2', 'vVelXY');
+  const vVelZ = varyingProperty('float', 'vVelZ');
+  const vViewZ = varyingProperty('float', 'vViewZ');
+  const vertexNode = Fn(() => {
+    const clipPos = vec4(0, 0, 0, -1).toVar();
+    If(aColor.w.greaterThan(0), () => {
+      vColor.assign(aColor.toVar());
+      if (gpuCompute) {
+        vLifetime.assign(aParticleState.x);
+        vStartLifetime.assign(aStartValues.x);
+        vStartFrame.assign(aParticleState.w);
+      } else {
+        vLifetime.assign(aLifetime);
+        vStartLifetime.assign(aStartLifetime);
+        vStartFrame.assign(aStartFrame);
+      }
+      vUv.assign(vec2(positionLocal.x.add(0.5), float(0.5).sub(positionLocal.y)));
+      const mvPos = modelViewMatrix.mul(vec4(aInstanceOffset.xyz, 1)).toVar();
+      const mvVel = modelViewMatrix.mul(vec4(aVelocity.xyz, 0)).xyz;
+      vVelXY.assign(vec2(mvVel.x, mvVel.y));
+      vVelZ.assign(mvVel.z);
+      const dist = sqrt(mvPos.x.mul(mvPos.x).add(mvPos.y.mul(mvPos.y)).add(mvPos.z.mul(mvPos.z)));
+      const sizeVal = gpuCompute ? aParticleState.y : aSize;
+      const pointSizePx = sizeVal.mul(POINT_SIZE_SCALE).div(dist);
+      const projY = cameraProjectionMatrix.element(1).element(1);
+      const halfExtent = pointSizePx.mul(mvPos.z.negate()).div(projY.mul(uViewportHeight).mul(0.5));
+      const vlen = sqrt(mvVel.x.mul(mvVel.x).add(mvVel.y.mul(mvVel.y)));
+      const hasVel = vlen.greaterThan(1e-4);
+      const invVlen = float(1).div(hasVel.select(vlen, float(1)));
+      const tx = hasVel.select(mvVel.x.mul(invVlen), float(1));
+      const ty = hasVel.select(mvVel.y.mul(invVlen), float(0));
+      const stretch = float(1).add(min(vlen.mul(uStretch), 3));
+      const ox = positionLocal.x.mul(halfExtent).mul(stretch);
+      const oy = positionLocal.y.mul(halfExtent);
+      mvPos.x.addAssign(tx.mul(ox).add(ty.mul(oy).negate()));
+      mvPos.y.addAssign(tx.mul(oy).add(ty.mul(ox)));
+      vViewZ.assign(mvPos.z.negate());
+      clipPos.assign(cameraProjectionMatrix.mul(mvPos));
+    });
+    return clipPos;
+  })();
+  const fragmentColor = Fn(() => {
+    const p = vUv.mul(2).sub(vec2(1, 1));
+    const r2 = p.x.mul(p.x).add(p.y.mul(p.y));
+    If(r2.greaterThan(1), () => {
+      Discard();
+    });
+    const nz = sqrt(float(1).sub(r2));
+    const N = vec3(p.x, p.y, nz);
+    const speed = sqrt(vVelXY.x.mul(vVelXY.x).add(vVelXY.y.mul(vVelXY.y)).add(vVelZ.mul(vVelZ)));
+    const speedBoost = float(1).add(min(speed.mul(0.15), 0.5));
+    const frameIndex = computeFrameIndex({
+      vLifetime,
+      vStartLifetime,
+      vStartFrame,
+      uFps: u.uFps,
+      uUseFPSForFrameIndex: u.uUseFPSForFrameIndex,
+      uTiles: u.uTiles,
+    });
+    const uvPoint = computeSpriteSheetUV({
+      baseUV: vUv,
+      frameIndex,
+      uTiles: u.uTiles,
+    });
+    const texColor = texture(u.uMap, uvPoint);
+    const base = vColor.mul(texColor);
+    const NdotL = max(dot(N, vec3(0, 0, 1)), float(0));
+    const diffuse = float(0.5).add(float(0.5).mul(NdotL));
+    const thickness = nz.mul(2);
+    const absorb = exp2(thickness.mul(uAbsorbK).negate());
+    const oneMinusNz = float(1).sub(nz);
+    const fresnel = uF0.add(float(1).sub(uF0).mul(pow(oneMinusNz, 5)));
+    const refr = base.rgb.mul(absorb).mul(diffuse).mul(speedBoost);
+    const reflColor = base.rgb.add(vec3(0.08, 0.08, 0.1));
+    const mixedColor = refr.mul(float(1).sub(fresnel)).add(reflColor.mul(fresnel));
+    const outColor = vec4(
+      mixedColor,
+      vColor.w.mul(float(1).sub(exp2(thickness.mul(uAbsorbK).negate())))
+    );
+    const softFade = computeSoftParticleFade({
+      viewZ: vViewZ,
+      uSoftEnabled: u.uSoftEnabled,
+      uSoftIntensity: u.uSoftIntensity,
+      uSceneDepthTex: u.uSceneDepthTex,
+      uCameraNearFar: u.uCameraNearFar,
+    });
+    outColor.assign(vec4(outColor.xyz, outColor.w.mul(softFade)));
+    applyBackgroundDiscard({
+      texColor: outColor,
+      uDiscardBg: u.uDiscardBg,
+      uBgColor: u.uBgColor,
+      uBgTolerance: u.uBgTolerance,
+    });
+    Discard(outColor.w.lessThan(ALPHA_DISCARD_THRESHOLD));
+    return outColor;
+  })();
+  const material = new MeshBasicNodeMaterial();
+  material.transparent = rendererConfig.transparent;
+  material.blending = rendererConfig.blending;
+  material.depthTest = rendererConfig.depthTest;
+  material.depthWrite = rendererConfig.depthWrite;
+  material.toneMapped = false;
+  material.fog = false;
+  material.vertexNode = vertexNode;
+  material.colorNode = fragmentColor;
+  return material;
+}
+var GAUSSIAN_WEIGHTS = [0.15, 0.23, 0.31, 0.23, 0.15];
+var bilinearWeight = (d) => Math.max(0, 1 - d);
+var BILATERAL_GRID_LEN = 6;
+var DEPTH_LEVEL_RADII = [1, 2, 4, 8, 8];
+var DEPTH_LEVEL_MIPS = DEPTH_LEVEL_RADII.map((r) => Math.floor(Math.log2(r)));
+var FLUID_SHADING_DEFAULTS = {
+  extinction: [0, 0.0693, 0.109],
+  ior: [1.31, 1.33, 1.34],
+  f0: 0.02,
+  specularPower: 250,
+};
+var beerLambert = (k, waterColor) => waterColor.map((c) => Math.exp(-k * (1 - c)));
+var fresnelCoefficient = (cosTheta, f0) => {
+  const oneMinusCos = 1 - cosTheta;
+  return Math.max(f0, f0 + (1 - f0) * oneMinusCos ** 5);
+};
+function createFluidAttributes() {
+  return {
+    offset: attribute('instanceOffset'),
+    color: attribute('instanceColor'),
+    particleState: attribute('instanceParticleState'),
+    startValues: attribute('instanceStartValues'),
+    velocity: attribute('instanceVelocity'),
+  };
+}
+function createFluidUniforms(config) {
+  const water = config?.waterColor ?? [0, 0.7375, 0.95];
+  return {
+    sphereSize: uniform(float(config?.sphereSize ?? 1.2)),
+    near: cameraNear,
+    far: cameraFar,
+    density: uniform(float(config?.density ?? 0.7)),
+    waterColor: uniform(vec3(water[0], water[1], water[2])),
+    f0: uniform(float(FLUID_SHADING_DEFAULTS.f0)),
+    specularPower: uniform(float(FLUID_SHADING_DEFAULTS.specularPower)),
+  };
+}
+var billboardVertex = (attrs, u) =>
+  Fn(() => {
+    const clipPos = vec4(0, 0, 0, -1).toVar();
+    const vColor = varyingProperty('vec4', 'vColor');
+    const vUv = varyingProperty('vec2', 'vUv');
+    const vViewZ = varyingProperty('float', 'vViewZ');
+    If(attrs.color.w.greaterThan(float(0)), () => {
+      const mv = modelViewMatrix.mul(vec4(attrs.offset.xyz, float(1))).toVar();
+      const size = attrs.particleState.y;
+      const velocityStretch = u.sphereSize.mul(float(0.02));
+      mv.x.addAssign(mv.x.add(velocityStretch.mul(attrs.velocity.x)));
+      mv.y.addAssign(mv.y.add(velocityStretch.mul(attrs.velocity.y)));
+      mv.z.addAssign(mv.z.add(velocityStretch.mul(attrs.velocity.z)));
+      vColor.assign(attrs.color);
+      vViewZ.assign(mv.z.negate());
+      vUv.assign(
+        vec2(positionLocal.x, positionLocal.y).sub(
+          vec2(float(0.5), float(0.5)).add(positionLocal.xy).mul(float(1).div(size))
+        )
+      );
+      clipPos.assign(
+        cameraProjectionMatrix.mul(
+          vec4(
+            mv.x.add(positionLocal.x.mul(u.sphereSize)),
+            mv.y.add(positionLocal.y.mul(u.sphereSize)),
+            mv.z,
+            float(1)
+          )
+        )
+      );
+    });
+    return clipPos;
+  })();
+function createFluidDepthTSLMaterial(config) {
+  const attrs = createFluidAttributes();
+  const u = createFluidUniforms(config);
+  const material = new MeshBasicNodeMaterial();
+  material.vertexNode = billboardVertex(attrs, u);
+  material.colorNode = Fn(() => {
+    const vUv = varyingProperty('vec2', 'vUv');
+    const vViewZ = varyingProperty('float', 'vViewZ');
+    varyingProperty('vec4', 'vColor');
+    const nxy = vec2(vUv.x.mul(2).sub(1), vUv.y.mul(2).sub(1));
+    const r2 = dot(nxy, nxy);
+    Discard(r2.greaterThan(float(1)));
+    const thickness = sqrt(float(1).sub(r2));
+    const normal = normalize(vec3(nxy.x, nxy.y, thickness));
+    const capViewZ = dot(
+      normal,
+      modelViewMatrix
+        .mul(vec4(attrs.offset.xyz, float(1)))
+        .xyz.sub(vec3(nxy.x.mul(u.near), nxy.y.mul(u.near), u.near))
+    )
+      .add(u.near)
+      .sub(oneMinus(normal.z).mul(u.sphereSize));
+    If(thickness.greaterThan(float(0)), () => {
+      vViewZ.assign(capViewZ);
+    });
+    return vec4(capViewZ, float(0), float(0), float(1));
+  })();
+  return material;
+}
+function createFluidThicknessTSLMaterial(config) {
+  const attrs = createFluidAttributes();
+  const u = createFluidUniforms(config);
+  const material = new MeshBasicNodeMaterial();
+  material.vertexNode = billboardVertex(attrs, u);
+  material.colorNode = Fn(() => {
+    const vUv = varyingProperty('vec2', 'vUv');
+    const nxy = vec2(vUv.x.mul(2).sub(1), vUv.y.mul(2).sub(1));
+    const r2 = dot(nxy, nxy);
+    Discard(r2.greaterThan(float(1)));
+    const thickness = sqrt(float(1).sub(r2));
+    return vec4(thickness, float(0), float(0), float(0));
+  })();
+  return material;
+}
+function createFluidBilateralTSLMaterial(level, sourceRadius, sourceTexture, iterationCount) {
+  createFluidUniforms(void 0);
+  const material = new MeshBasicNodeMaterial();
+  const radius = float(DEPTH_LEVEL_RADII[level] ?? 8);
+  const invRadius = float(1).div(radius);
+  float(level);
+  material.colorNode = Fn(() => {
+    const wSum = float(0).toVar();
+    const wTotal = float(0).toVar();
+    textureLoad(
+      sourceTexture,
+      floor(screenUV.mul(vec2(float(1).div(invRadius), float(1).div(invRadius)))),
+      float(0)
+    );
+    for (let gx = 0; gx < iterationCount; gx++) {
+      for (let gy = 0; gy < iterationCount; gy++) {
+        const offX = float(gx - Math.floor(iterationCount / 2));
+        const offY = float(gy - Math.floor(iterationCount / 2));
+        const sampleUV = vec2(
+          screenUV.x.add(offX.mul(invRadius).mul(float(0.5))),
+          screenUV.y.add(offY.mul(invRadius).mul(float(0.5)))
+        );
+        const sample = textureLoad(sourceTexture, sampleUV, float(0));
+        const spatial = float(1).sub(maxAbs(offX.mul(invRadius), offY.mul(invRadius)));
+        sample.sub(float(0));
+        If(spatial.greaterThan(float(0)), () => {
+          wSum.addAssign(sample.x.mul(spatial));
+          wTotal.addAssign(spatial);
+        });
+      }
+    }
+    const filtered = float(0).toVar();
+    If(wTotal.greaterThan(float(0)), () => {
+      filtered.assign(wSum.div(wTotal));
+    });
+    If(wTotal.lessThanEqual(float(0)), () => {
+      filtered.assign(float(0));
+    });
+    return vec4(filtered, float(0), float(0), radius);
+  })();
+  return material;
+}
+var maxAbs = (a, b) => {
+  const absA = a.abs();
+  const absB = b.abs();
+  return absA.greaterThan(absB).select(absA, absB);
+};
+function createFluidGaussianTSLMaterial(textureIn, axisWeight) {
+  const material = new MeshBasicNodeMaterial();
+  const weights = GAUSSIAN_WEIGHTS.map((w) => float(w));
+  material.colorNode = Fn(() => {
+    const sum = float(0).toVar();
+    for (let o = 0; o < GAUSSIAN_WEIGHTS.length; o++) {
+      const offset = float(o - 2).mul(float(0.5));
+      const sampleUV = vec2(
+        screenUV.x.add(axisWeight === 1 ? offset : float(0)),
+        screenUV.y.add(axisWeight === 0 ? offset : float(0))
+      );
+      sum.addAssign(textureLoad(textureIn, sampleUV, float(0)).x.mul(weights[o]));
+    }
+    return vec4(sum, float(0), float(0), float(0));
+  })();
+  return material;
+}
+function createFluidShadingTSLMaterial(sources, config) {
+  const material = new MeshBasicNodeMaterial();
+  const density = uniform(float(config?.density ?? 0.7));
+  const water = config?.waterColor ?? [0, 0.7375, 0.95];
+  const uWater = uniform(vec3(water[0], water[1], water[2]));
+  const bg = uniform(vec3(1, 1, 1));
+  material.colorNode = Fn(() => {
+    const d1 = textureLoad(sources.depth1, screenUV, float(0));
+    const d2 = textureLoad(sources.depth2, screenUV, float(0));
+    const d3 = textureLoad(sources.depth3, screenUV, float(0));
+    const d4 = textureLoad(sources.depth4, screenUV, float(0));
+    const thick = textureLoad(sources.thickness, screenUV, float(0)).x;
+    const anyDepth = d1.x.add(d2.x).add(d3.x).add(d4.x).greaterThan(float(0));
+    const outColor = vec4(bg.xyz, float(1)).toVar();
+    If(anyDepth, () => {
+      const depth0 = d1.x.equal(float(0)).select(d2.x, d1.x);
+      const depth = max(depth0, float(1e-4));
+      const radius = max(d1.w, float(1));
+      floor(log2(radius));
+      const thickness = max(thick.mul(depth), float(0));
+      outColor.assign(vec4(beerNode(density, thickness, uWater), float(1)));
+    });
+    return outColor;
+  })();
+  return material;
+}
+var beerNode = (k, thickness, waterColor) => {
+  const t = k.mul(thickness);
+  return vec3(
+    exp(t.mul(oneMinus(waterColor.x))),
+    exp(t.mul(oneMinus(waterColor.y))),
+    exp(t.mul(oneMinus(waterColor.z)))
+  );
+};
+function createFluidSphereTSLMaterial(config) {
+  const material = new MeshBasicNodeMaterial();
+  const attrs = createFluidAttributes();
+  material.vertexNode = Fn(() => {
+    const clipPos = vec4(0, 0, 0, -1).toVar();
+    const vUv = varyingProperty('vec2', 'vUv');
+    If(attrs.color.w.greaterThan(float(0)), () => {
+      const mv = modelViewMatrix.mul(vec4(attrs.offset.xyz, float(1))).toVar();
+      vUv.assign(vec2(positionLocal.x.add(float(0.5)), positionLocal.y.add(float(0.5))));
+      const size = attrs.particleState.y;
+      mv.x.addAssign(positionLocal.x.mul(size));
+      mv.y.addAssign(positionLocal.y.mul(size));
+      clipPos.assign(cameraProjectionMatrix.mul(mv));
+    });
+    return clipPos;
+  })();
+  material.colorNode = Fn(() => {
+    const vUv = varyingProperty('vec2', 'vUv');
+    const nxy = vec2(vUv.x.mul(2).sub(1), vUv.y.mul(2).sub(1));
+    const r2 = dot(nxy, nxy);
+    Discard(r2.greaterThan(float(1)));
+    const normal = normalize(vec3(nxy.x, nxy.y, sqrt(float(1).sub(r2))));
+    const lightDir = normalize(vec3(float(-1), float(1), float(-1)));
+    const viewDir = normalize(vec3(float(0), float(0), float(1)));
+    const diffuse = clamp(dot(lightDir, normal), float(0), float(1));
+    const half = normalize(lightDir.add(viewDir));
+    pow(clamp(dot(normal, half), float(0), float(1)), float(500));
+    const fresnel = fresnelNode(dot(normal, viewDir.negate()));
+    reflect(viewDir.negate(), normal);
+    const atten = vec3(float(0.0333), float(0.0333), float(0.0333));
+    const lin = vec3(fresnel, fresnel, fresnel)
+      .mul(atten)
+      .add(vec3(diffuse, diffuse, diffuse).mul(vec3(float(0.941), float(0.941), float(0.941))));
+    return vec4(
+      lin.x.sub(float(0.0333)),
+      lin.y.sub(float(0.0333)),
+      lin.z.sub(float(0.0333)),
+      float(1)
+    );
+  })();
+  return material;
+}
+var fresnelNode = (cosTheta) => float(0.02).add(float(0.98).mul(pow(oneMinus(cosTheta), float(5))));
+function createFullScreenGeometry() {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3)
+  );
+  return geometry;
+}
+function fullScreenQuad(material) {
+  material.vertexNode = vec4(positionLocal.xy, float(0), float(1));
+  const mesh = new Mesh(createFullScreenGeometry(), material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+function instancedQuad(material, geometry) {
+  const mesh = new Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+function toTextureNode(node, passNodes) {
+  const passNode = node;
+  passNodes.push(passNode);
+  return passNode.getTextureNode?.('output') ?? node;
+}
+function buildFluidScreenSpacePasses(config, envMap = null, camera, particleGeometry) {
+  const quadFor = (material) =>
+    particleGeometry ? instancedQuad(material, particleGeometry) : fullScreenQuad(material);
+  if (config?.sphereRender) {
+    return {
+      material: createFluidSphereTSLMaterial(),
+      passNodes: [],
+      geometry: particleGeometry,
+    };
+  }
+  const cam = camera;
+  const passNodes = [];
+  const depthScene = new Scene();
+  depthScene.add(quadFor(createFluidDepthTSLMaterial(config)));
+  const depthPass0 = toTextureNode(
+    pass(depthScene, cam, {
+      type: FloatType,
+      format: RedFormat,
+      depthBuffer: false,
+    }),
+    passNodes
+  );
+  const levelTextures = [depthPass0];
+  for (let level = 1; level <= 4; level++) {
+    const stageScene = new Scene();
+    stageScene.add(
+      fullScreenQuad(
+        createFluidBilateralTSLMaterial(
+          level,
+          DEPTH_LEVEL_RADII[level - 1],
+          levelTextures[level - 1],
+          level === 1 || level === 4 ? 3 : 6
+        )
+      )
+    );
+    levelTextures.push(
+      toTextureNode(
+        pass(stageScene, cam, {
+          type: FloatType,
+          format: RedFormat,
+          depthBuffer: false,
+        }),
+        passNodes
+      )
+    );
+  }
+  const thicknessScene = new Scene();
+  thicknessScene.add(quadFor(createFluidThicknessTSLMaterial(config)));
+  const thicknessPass = toTextureNode(
+    pass(thicknessScene, cam, {
+      type: HalfFloatType,
+      format: RedFormat,
+      depthBuffer: false,
+    }),
+    passNodes
+  );
+  const blurXScene = new Scene();
+  blurXScene.add(fullScreenQuad(createFluidGaussianTSLMaterial(thicknessPass, 1)));
+  const blurXPass = toTextureNode(
+    pass(blurXScene, cam, {
+      type: HalfFloatType,
+      format: RedFormat,
+      depthBuffer: false,
+    }),
+    passNodes
+  );
+  const blurYScene = new Scene();
+  blurYScene.add(fullScreenQuad(createFluidGaussianTSLMaterial(blurXPass, 0)));
+  const blurYPass = toTextureNode(
+    pass(blurYScene, cam, {
+      type: HalfFloatType,
+      format: RedFormat,
+      depthBuffer: false,
+    }),
+    passNodes
+  );
+  const shading = createFluidShadingTSLMaterial(
+    {
+      depth1: levelTextures[1] ?? depthPass0,
+      depth2: levelTextures[2] ?? depthPass0,
+      depth3: levelTextures[3] ?? depthPass0,
+      depth4: levelTextures[4] ?? depthPass0,
+      thickness: blurYPass,
+    },
+    config
+  );
+  shading.vertexNode = vec4(positionLocal.xy, float(0), float(1));
+  return { material: shading, passNodes, geometry: createFullScreenGeometry() };
+}
 function createInstancedBillboardTSLMaterial(sharedUniforms, rendererConfig, gpuCompute = false) {
   const u = createParticleUniforms(sharedUniforms);
   const uViewportHeight = uniform(
@@ -2214,25 +4502,7 @@ function createTrailRibbonTSLMaterial(trailUniforms, rendererConfig) {
     const tangent = normalize(tangentLen.lessThan(1e-4).select(vec3(0, 1, 0), rawTangent));
     modelViewMatrix.mul(vec4(current, 1));
     const viewDir = normalize(cameraPosition.sub(current));
-    const rawPerp = cross(tangent, viewDir);
-    const perpLen = length(rawPerp);
-    const camRight = vec3(
-      cameraViewMatrix.element(0).element(0),
-      cameraViewMatrix.element(1).element(0),
-      cameraViewMatrix.element(2).element(0)
-    );
-    const camRightDotTangent = dot(camRight, tangent);
-    const fallbackPerp = normalize(camRight.sub(tangent.mul(camRightDotTangent)));
-    const perp = normalize(
-      perpLen
-        .lessThan(1e-4)
-        .select(
-          fallbackPerp,
-          normalize(
-            mix(fallbackPerp, normalize(rawPerp), smoothstep(float(0), float(0.7), perpLen))
-          )
-        )
-    );
+    const perp = billboardPerp({ tangent, viewDir });
     const offsetPos = current.add(perp.mul(aTrailOffset).mul(aTrailHalfWidth));
     const mvOffset = modelViewMatrix.mul(vec4(offsetPos, 1));
     vViewZ.assign(mvOffset.z.negate());
@@ -2282,21 +4552,119 @@ function createTrailRibbonTSLMaterial(trailUniforms, rendererConfig) {
   material.colorNode = colorNode;
   return material;
 }
+
+// src/js/effects/three-particles/webgpu/tsl-materials.ts
 function createTSLParticleMaterial(
   rendererType,
   sharedUniforms,
   rendererConfig,
-  gpuCompute = false
+  gpuCompute = false,
+  particleGeometry
 ) {
   switch (rendererType) {
     case 'INSTANCED' /* INSTANCED */:
       return createInstancedBillboardTSLMaterial(sharedUniforms, rendererConfig, gpuCompute);
     case 'MESH' /* MESH */:
       return createMeshParticleTSLMaterial(sharedUniforms, rendererConfig, gpuCompute);
+    case 'FLUID' /* FLUID */: {
+      const fluidCfg = {
+        stretch: readFluidScalar(sharedUniforms, 'fluidStretch', 1),
+        absorption: readFluidScalar(sharedUniforms, 'fluidAbsorption', 1.44),
+        ior: readFluidScalar(sharedUniforms, 'fluidIor', 1.33),
+        sphereSize: readFluidScalar(sharedUniforms, 'fluidSphereSize', 1.2),
+        density: readFluidScalar(sharedUniforms, 'fluidDensity', 0.7),
+        waterColor: readFluidWaterColor(sharedUniforms),
+        sphereRender: readFluidFlag(sharedUniforms, 'fluidSphereRender'),
+      };
+      const chain = buildFluidScreenSpacePasses(
+        fluidCfg,
+        sharedUniforms.envMap?.value ?? null,
+        void 0,
+        particleGeometry
+      );
+      chain.material.__fluidPassNodes = chain.passNodes;
+      if (chain.geometry) {
+        chain.material.__fluidPassGeometry = chain.geometry;
+      }
+      return chain.material;
+    }
     case 'POINTS' /* POINTS */:
     default:
       return createPointSpriteTSLMaterial(sharedUniforms, rendererConfig, gpuCompute);
   }
+}
+var readFluidScalar = (sharedUniforms, key, fallback) => {
+  const raw = sharedUniforms[key]?.value;
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
+};
+var readFluidFlag = (sharedUniforms, key) => {
+  const raw = sharedUniforms[key]?.value;
+  return raw === true;
+};
+var readFluidWaterColor = (sharedUniforms) => {
+  const raw = sharedUniforms.fluidWaterColor?.value;
+  if (Array.isArray(raw) && raw.length === 3) {
+    return [Number(raw[0]) || 0, Number(raw[1]) || 0, Number(raw[2]) || 0];
+  }
+  return [0, 0.7375, 0.95];
+};
+function createFluidSimPipeline(solver, shared, maxParticles, normalizedConfig) {
+  const renderer = normalizedConfig.renderer;
+  const isSPH = solver === 'SPH';
+  const sharedPair = {
+    position: shared.position,
+    velocity: shared.velocity,
+  };
+  if (isSPH) {
+    const cfg2 = renderer.sph;
+    const halfBox = [...(cfg2?.halfBoxSize ?? SPH_DEFAULTS.halfBoxSize)];
+    const ratio2 =
+      typeof cfg2?.boxWidthRatio === 'number' && Number.isFinite(cfg2.boxWidthRatio)
+        ? cfg2.boxWidthRatio
+        : 1;
+    const state2 = initSPHDambreak(halfBox, Math.max(1, maxParticles));
+    shared.position.array.set(state2.position);
+    shared.velocity.array.set(state2.velocity);
+    const sph = createSPHPipeline(
+      state2.count,
+      resolveSPHParams(cfg2, halfBox),
+      [halfBox[0], halfBox[1], halfBox[2] * ratio2],
+      sharedPair
+    );
+    return {
+      computeNodes: sph.computeNodes,
+      passNames: sph.passNames,
+      passLayouts: sph.passLayouts,
+      buffers: sph.buffers,
+      uniforms: sph.uniforms,
+      gridCount: sph.gridCount,
+      numParticles: sph.numParticles,
+    };
+  }
+  const cfg = renderer.mlsMpm;
+  const box = [...(cfg?.boxSize ?? MLS_MPM_DEFAULTS.boxSize)];
+  const ratio =
+    typeof cfg?.boxWidthRatio === 'number' && Number.isFinite(cfg.boxWidthRatio)
+      ? cfg.boxWidthRatio
+      : 1;
+  const state = initMLSMPMDambreak(box, Math.max(1, maxParticles));
+  shared.position.array.set(state.position);
+  shared.velocity.array.set(state.velocity);
+  const mls = createMLSMPMPipeline(
+    state.count,
+    resolveMLSMPMParams(cfg, box),
+    [box[0], box[1], box[2] * ratio],
+    sharedPair
+  );
+  return {
+    computeNodes: mls.computeNodes,
+    passNames: mls.passNames,
+    passLayouts: mls.passLayouts,
+    buffers: mls.buffers,
+    uniforms: mls.uniforms,
+    gridCount: mls.gridCount,
+    numParticles: mls.numParticles,
+  };
 }
 function createTSLTrailMaterial(trailUniforms, rendererConfig) {
   return createTrailRibbonTSLMaterial(trailUniforms, rendererConfig);
@@ -2498,27 +4866,106 @@ function enableWebGPU(renderer) {
     createTrailRibbonUpdate,
     encodeShapeEmitParams,
   };
-  return registerTSLMaterialFactory(factory, renderer !== void 0 ? { renderer } : void 0);
+  const registered = registerTSLMaterialFactory(
+    factory,
+    renderer !== void 0 ? { renderer } : void 0
+  );
+  if (renderer !== void 0 && registered) {
+    registerElectricArcGPUFactory({ create: createElectricArcGPU }, renderer);
+  } else {
+    registerElectricArcGPUFactory(null);
+  }
+  return registered;
 }
 
 export {
+  BILATERAL_GRID_LEN,
   CH,
+  DEPTH_LEVEL_MIPS,
+  DEPTH_LEVEL_RADII,
+  FLUID_SHADING_DEFAULTS,
+  GAUSSIAN_WEIGHTS,
+  MLS_MPM_CELL_WORDS,
+  MLS_MPM_C_WORDS,
+  MLS_MPM_DEFAULTS,
+  MLS_MPM_FIXED_POINT_MULTIPLIER,
+  MLS_MPM_MAX_GRID_DIM,
+  MLS_MPM_PARTICLE_SPACING,
+  MLS_MPM_SUBSTEPS,
+  MLS_MPM_WALL,
+  MLS_MPM_WORKGROUP_SIZE,
+  SPH_CELL_SIZE_FACTOR,
+  SPH_DEFAULTS,
+  SPH_DEFAULT_KERNEL_RADIUS,
+  SPH_LATTICE_FACTOR,
+  SPH_LATTICE_MARGIN,
+  SPH_MAX_HALF_BOX,
+  SPH_R2_EPSILON,
+  SPH_SCAN_CHUNK,
+  SPH_SCAN_STAGES,
+  SPH_SENTINEL_CELLS,
+  SPH_SLAB_RADIUS,
+  SPH_SUBSTEPS,
+  SPH_WALL_STIFFNESS,
+  SPH_WORKGROUP_SIZE,
+  beerLambert,
+  bilinearWeight,
+  buildFluidScreenSpacePasses,
+  computeMLSMPMGridCount,
+  computeMLSMPMGridDims,
+  computeSPHGridCount,
+  computeSPHGridDims,
+  computeSPHOffset,
+  computeSPHScanBlocks,
+  computeSPHScanInnerSteps,
+  countMLSMPMDambreak,
+  countSPHDambreak,
   createComputePipeline,
+  createFluidAttributes,
+  createFluidBilateralTSLMaterial,
+  createFluidDepthTSLMaterial,
+  createFluidGaussianTSLMaterial,
+  createFluidShadingTSLMaterial,
+  createFluidSimPipeline,
+  createFluidSphereTSLMaterial,
+  createFluidTSLMaterial,
+  createFluidThicknessTSLMaterial,
+  createFluidUniforms,
+  createMLSMPMBuffers,
+  createMLSMPMPipeline,
   createModifierStorageBuffers,
+  createSPHBuffers,
+  createSPHPipeline,
   createSubEmitterFifoAttribute,
   createSubEmitterInitUpdate,
   createTSLParticleMaterial,
   createTSLTrailMaterial,
   createTrailRibbonUpdate,
+  decodeFixedPoint,
   enableWebGPU,
   encodeCollisionPlanesForGPU,
+  encodeFixedPoint,
   encodeForceFieldsForGPU,
   encodeShapeEmitParams,
+  fresnelCoefficient,
+  initMLSMPMDambreak,
+  initSPHDambreak,
   mixBirthSeed,
+  mlsmpmCellIndex,
+  mlsmpmCellWordBase,
+  mlsmpmQuadraticWeights,
   nextSystemSeed,
   pcg01,
   pcgRawU32,
   randomChannel,
+  resolveMLSMPMParams,
+  resolveSPHParams,
+  sphCellId,
+  sphDensityGradientScale,
+  sphDensityKernelScale,
+  sphKernelPowers,
+  sphNearDensityKernelScale,
+  sphViscosityLaplacianScale,
   subEmitterWindowSize,
 };
 //# sourceMappingURL=webgpu.js.map

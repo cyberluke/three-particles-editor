@@ -1,0 +1,1262 @@
+import * as THREE from 'three';
+import { pass } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { examples } from './examples-data.js';
+import {
+  initVersionSwitcher,
+  cdnUrl,
+  webgpuUrl,
+  getAvailableVersions,
+} from './version-switcher.js';
+import { BenchmarkRunner } from './benchmark.js';
+import { METRICS } from './benchmark-chart.js';
+
+// ─── Bootstrap: load the particle library from CDN ──────────────────
+const version = (await initVersionSwitcher()) || 'local';
+
+const particleModule = await import(cdnUrl(version));
+const { createParticleSystem, updateParticleSystems } = particleModule;
+
+// ─── WebGPU support ────────────────────────────────────────────────
+// The importmap maps "three" to three.webgpu.js for a unified Three.js
+// instance. All examples use WebGPURenderer (auto WebGL fallback).
+// The public init is `gpuModule.enableWebGPU(renderer)`, called after
+// each renderer initializes: it registers the particle TSL/compute
+// factories AND the ElectricArc GPU factory in one shot.
+let webgpuAvailable = false;
+let gpuModule = null;
+
+try {
+  if (navigator.gpu) {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (adapter) {
+      try {
+        gpuModule = await import(webgpuUrl(version));
+      } catch {
+        gpuModule = null;
+      }
+      webgpuAvailable = true;
+    }
+  }
+} catch {
+  // WebGPU not available
+}
+
+// Debug: log WGSL shader compilation errors with source code
+if (typeof GPUDevice !== 'undefined') {
+  const _origCSM = GPUDevice.prototype.createShaderModule;
+  GPUDevice.prototype.createShaderModule = function (descriptor) {
+    const module = _origCSM.call(this, descriptor);
+    module.getCompilationInfo().then((info) => {
+      const errors = info.messages.filter((m) => m.type === 'error');
+      if (errors.length > 0) {
+        console.group('%c[WGSL Shader Error]', 'color:red;font-weight:bold');
+        errors.forEach((e) => console.error(`Line ${e.lineNum}:${e.linePos} — ${e.message}`));
+        console.log(descriptor.code);
+        console.groupEnd();
+      }
+    });
+    return module;
+  };
+}
+
+// Texture ID to file mapping
+const TEXTURE_MAP = {
+  FLAME: 'textures/flame.webp',
+  CLOUD: 'textures/cloud.webp',
+  SNOWFLAKE: 'textures/snowflake.webp',
+  GRADIENT_POINT: 'textures/gradient-point.webp',
+  VORTEX: 'textures/vortex.webp',
+  STAR: 'textures/star.webp',
+  POINT: 'textures/point.webp',
+  PLUS_TOON: 'textures/plus-toon.webp',
+  SNOWFLAKE_DETAILED: 'textures/snowflake-detailed.webp',
+  SQUARE: 'textures/square.webp',
+  CIRCLE: 'textures/circle.webp',
+  LEAF_TOON: 'textures/leaf-toon.webp',
+  SKULL: 'textures/skull.webp',
+  ROCKS: 'textures/rocks.webp',
+  STARBURST: 'textures/starbust.webp',
+  SOFT_SMOKE: 'textures/soft-smoke.webp',
+  BUBBLES: 'textures/bubbles.webp',
+  FEATHER: 'textures/feather.webp',
+};
+
+const textureLoader = new THREE.TextureLoader();
+const textureCache = {};
+
+function loadTexture(textureId) {
+  if (!textureId || !TEXTURE_MAP[textureId]) return null;
+  if (textureCache[textureId]) return textureCache[textureId];
+  const tex = textureLoader.load(TEXTURE_MAP[textureId]);
+  tex.flipY = false;
+  textureCache[textureId] = tex;
+  return tex;
+}
+
+function resolveBlending(blending) {
+  if (typeof blending === 'number') return blending;
+  if (blending === 'THREE.AdditiveBlending') return THREE.AdditiveBlending;
+  return THREE.NormalBlending;
+}
+
+// Mesh geometry factories for RendererType.MESH examples
+const MESH_GEOMETRIES = {
+  BOX: () => new THREE.BoxGeometry(1, 1, 1),
+  SPHERE: () => new THREE.SphereGeometry(0.5, 12, 8),
+  ICOSAHEDRON: () => new THREE.IcosahedronGeometry(0.5, 0),
+  TORUS: () => new THREE.TorusGeometry(0.4, 0.15, 8, 24),
+  CONE: () => new THREE.ConeGeometry(0.4, 1, 8),
+  OCTAHEDRON: () => new THREE.OctahedronGeometry(0.5, 0),
+  DODECAHEDRON: () => new THREE.DodecahedronGeometry(0.5, 0),
+  TETRAHEDRON: () => new THREE.TetrahedronGeometry(0.6, 0),
+  TORUS_KNOT: () => new THREE.TorusKnotGeometry(0.3, 0.1, 32, 8),
+  CYLINDER: () => new THREE.CylinderGeometry(0.3, 0.3, 1, 8),
+};
+
+function prepareConfig(config, textureId, meshType, forceGPU = false) {
+  const prepared = JSON.parse(JSON.stringify(config));
+  delete prepared._editorData;
+  if (!forceGPU) {
+    prepared.simulationBackend = 'CPU';
+  }
+  // WebGPU does not support variable-size point primitives (pointUV / gl_PointCoord),
+  // so always force POINTS → INSTANCED when WebGPURenderer is in use.
+  if (webgpuAvailable) {
+    const rt = prepared.renderer?.rendererType;
+    if (!rt || rt === 'POINTS') {
+      prepared.renderer = prepared.renderer || {};
+      prepared.renderer.rendererType = 'INSTANCED';
+    }
+  }
+  if (prepared.renderer?.blending) {
+    prepared.renderer.blending = resolveBlending(prepared.renderer.blending);
+  }
+  const tex = loadTexture(textureId);
+  if (tex) prepared.map = tex;
+  if (prepared.subEmitters) {
+    for (const sub of prepared.subEmitters) {
+      if (sub.config?.renderer?.blending) {
+        sub.config.renderer.blending = resolveBlending(sub.config.renderer.blending);
+      }
+      if (sub.textureId) {
+        const subTex = loadTexture(sub.textureId);
+        if (subTex) sub.config.map = subTex;
+        delete sub.textureId;
+      }
+    }
+  }
+  // Attach mesh geometry for MESH renderer examples
+  if (meshType && MESH_GEOMETRIES[meshType]) {
+    prepared.renderer = prepared.renderer || {};
+    prepared.renderer.mesh = { geometry: MESH_GEOMETRIES[meshType]() };
+  }
+  return prepared;
+}
+
+// ─── Active demo management — only one demo runs at a time ───────────
+let activeCard = null;
+const cardRendererTypes = new Map();
+const cardBackendTypes = new Map();
+
+function getConfigRendererType(example) {
+  return example.config?.renderer?.rendererType || 'POINTS';
+}
+
+function isTrailExample(example) {
+  return getConfigRendererType(example) === 'TRAIL';
+}
+
+function isMeshExample(example) {
+  return getConfigRendererType(example) === 'MESH';
+}
+
+function isSoftParticlesExample(example) {
+  return !!example.softParticles;
+}
+
+function isElectricArcExample(example) {
+  return example.kind === 'electric-arc';
+}
+
+/**
+ * Prepare an ElectricArc section config (§40): pass-through + backend choice.
+ * The engine maps AUTO/GPU/CPU with GPU-compute-when-available semantics.
+ */
+function prepareElectricArcConfig(config, backend) {
+  const prepared = JSON.parse(JSON.stringify(config));
+  delete prepared._editorData;
+  prepared.simulationBackend = backend === 'CPU' ? 'CPU' : 'GPU';
+  return prepared;
+}
+
+/**
+ * Optional Three r186 RenderPipeline per card metadata (§37, §38).
+ * Only cards with `postprocessing.bloom` get a pipeline; every other
+ * example keeps its existing plain `renderer.render(...)` behavior.
+ */
+function createRenderPipelineFor(renderer, scene, camera, meta) {
+  if (!meta || !meta.bloom) return null;
+  const pipeline = new THREE.RenderPipeline(renderer);
+  const scenePass = pass(scene, camera);
+  const sceneColor = scenePass.getTextureNode('output');
+  const bloomPass = bloom(sceneColor, meta.bloom.strength, meta.bloom.radius, meta.bloom.threshold);
+  pipeline.outputNode = sceneColor.add(bloomPass);
+  return pipeline;
+}
+
+/**
+ * Cinematic lab scene for the Electric Arc demo (§35, §36).
+ * Warm ivory background, two curved ivory conductors with dark olive
+ * terminal caps and invisible Object3D anchors at the terminal faces.
+ * Returns { leftAnchor, rightAnchor, animate }.
+ */
+function buildElectricArcScene(scene, camera) {
+  scene.background = new THREE.Color(0xe8e4d8);
+  scene.fog = new THREE.FogExp2(0xe8e4d8, 0.09);
+
+  const conductorMat = new THREE.MeshPhysicalMaterial({
+    color: '#e8e2d5',
+    roughness: 0.24,
+    metalness: 0.08,
+    clearcoat: 0.55,
+    clearcoatRoughness: 0.18,
+  });
+  const terminalMat = new THREE.MeshPhysicalMaterial({
+    color: '#4a5240',
+    roughness: 0.35,
+    metalness: 0.6,
+  });
+
+  const leftCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-2.2, -0.2, 0),
+    new THREE.Vector3(-1.8, 0, 0),
+    new THREE.Vector3(-1.45, 0.15, 0),
+    new THREE.Vector3(-1.12, 0, 0),
+  ]);
+  const left = new THREE.Mesh(new THREE.TubeGeometry(leftCurve, 48, 0.06, 12, false), conductorMat);
+  const leftCap = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.05, 16), terminalMat);
+  leftCap.rotation.z = Math.PI / 2;
+  leftCap.position.set(-1.12, 0, 0);
+  const leftAnchor = new THREE.Object3D();
+  leftAnchor.position.set(-1.1, 0, 0);
+
+  const rightCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(2.2, -0.2, 0),
+    new THREE.Vector3(1.8, 0, 0),
+    new THREE.Vector3(1.45, 0.15, 0),
+    new THREE.Vector3(1.12, 0, 0),
+  ]);
+  const right = new THREE.Mesh(
+    new THREE.TubeGeometry(rightCurve, 48, 0.06, 12, false),
+    conductorMat
+  );
+  const rightCap = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.05, 16), terminalMat);
+  rightCap.rotation.z = Math.PI / 2;
+  rightCap.position.set(1.12, 0, 0);
+  const rightAnchor = new THREE.Object3D();
+  rightAnchor.position.set(1.1, 0, 0);
+
+  scene.add(left, leftCap, leftAnchor, right, rightCap, rightAnchor);
+
+  const ambient = new THREE.AmbientLight(0xfff6e0, 1.1);
+  const key = new THREE.DirectionalLight(0xffffff, 2.2);
+  key.position.set(2.5, 4, 3);
+  scene.add(ambient, key);
+
+  // slow, small conductor breathing so the arc visibly tracks moving
+  // bound endpoints — dynamic binding, GPU recompute, CPU parity (§36)
+  const baseX = left.position.x;
+  const animate = (t) => {
+    const s = Math.sin(t * 0.8);
+    left.position.x = baseX + 0.04 * s;
+    right.position.x = -(-baseX) - 0.04 * s; // mirrored 2.2 baseline
+    leftCap.position.x = -1.12 + 0.04 * s;
+    rightCap.position.x = 1.12 - 0.04 * s;
+    left.rotation.y = 0.05 * Math.sin(t * 0.5);
+    right.rotation.y = -0.05 * Math.sin(t * 0.5);
+  };
+
+  camera.position.set(0, 0.35, 4.3);
+  camera.lookAt(0, 0, 0);
+
+  return { leftAnchor, rightAnchor, animate };
+}
+
+/* Render helper: pipeline when metadata defines one, plain render otherwise. */
+function renderDemoView(demo) {
+  if (demo.renderPipeline) demo.renderPipeline.render();
+  else demo.renderer.render(demo.scene, demo.camera);
+}
+
+/**
+ * Set up soft particles scene: ground plane + depth render target.
+ * Returns { groundScene, renderTarget, groundMesh } or null if not a soft particles example.
+ */
+function setupSoftParticlesScene(renderer, camera, width, height) {
+  const pixelWidth = width * renderer.getPixelRatio();
+  const pixelHeight = height * renderer.getPixelRatio();
+
+  const renderTarget = new THREE.WebGLRenderTarget(pixelWidth, pixelHeight, {
+    depthTexture: new THREE.DepthTexture(pixelWidth, pixelHeight),
+  });
+
+  // Ground plane — positioned so particles visibly intersect it
+  const groundGeom = new THREE.PlaneGeometry(40, 40);
+  // WebGPURenderer uses LinearSRGBColorSpace output (no sRGB encode on output).
+  // THREE.Color(0x444444) stores sRGB values but the renderer won't apply the
+  // sRGB transfer curve on output, making the plane look darker than intended.
+  // Use setRGB with LinearSRGBColorSpace so the hex values are stored directly
+  // as linear values, preserving the intended visual brightness.
+  const groundColor = new THREE.Color();
+  groundColor.setRGB(0x44 / 0xff, 0x44 / 0xff, 0x44 / 0xff, THREE.LinearSRGBColorSpace);
+  const groundMat = new THREE.MeshBasicMaterial({ color: groundColor });
+  const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+  groundMesh.rotation.x = -Math.PI / 2;
+  groundMesh.position.y = -2.5;
+
+  return { renderTarget, groundMesh };
+}
+
+class LiveDemo {
+  constructor(container, exampleData, rendererType = 'POINTS', backend = 'CPU') {
+    this.container = container;
+    this.data = exampleData;
+    this.rendererType = rendererType;
+    this.backend = backend;
+    this.clock = new THREE.Clock();
+    this.frames = 0;
+    this.fpsAccum = 0;
+    this.lastFpsUpdate = 0;
+    this.paused = false;
+    this.pausedDuration = 0;
+    this.pauseStartTime = 0;
+    this.disposed = false;
+    this.init();
+  }
+
+  async init() {
+    const canvas = this.container.querySelector('canvas');
+    canvas.style.display = 'block';
+    const img = this.container.querySelector('.preview-img');
+    if (img) img.style.display = 'none';
+    const overlay = this.container.querySelector('.play-overlay');
+    if (overlay) overlay.style.display = 'none';
+    const stopHint = this.container.querySelector('.stop-hint');
+    if (stopHint) stopHint.style.display = 'flex';
+
+    const width = canvas.clientWidth || 320;
+    const height = canvas.clientHeight || 220;
+
+    this.renderer = new THREE.WebGPURenderer({
+      canvas,
+      antialias: true,
+      alpha: true,
+    });
+    await this.renderer.init();
+    if (this.disposed) {
+      this.renderer.dispose();
+      return;
+    }
+    // Public WebGPU init registers particle TSL/compute + ElectricArc GPU
+    // factories against this renderer; `false` on non-compute fallbacks.
+    this.computeEnabled = gpuModule?.enableWebGPU?.(this.renderer) ?? false;
+    if (isElectricArcExample(this.data)) {
+      // Cinematic demo: modern color management, RenderPipeline does the
+      // final tone-map + sRGB output (§37–§39).
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.05;
+    } else {
+      // Particle shaders output raw sRGB values (textures are not linearised).
+      // Disable the output pass sRGB conversion to avoid double-gamma encoding.
+      this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    }
+    this.renderer.setSize(width, height);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(45, width / height, 1, 100);
+    this.camera.position.set(0, 0, 15);
+    this.camera.lookAt(0, 0, 0);
+
+    // Soft particles: angled camera + ground plane + depth render target
+    this.softParticlesSetup = null;
+    if (isSoftParticlesExample(this.data)) {
+      this.camera.position.set(0, 4, 12);
+      this.camera.lookAt(0, -2, 0);
+      const setup = setupSoftParticlesScene(this.renderer, this.camera, width, height);
+      this.softParticlesSetup = setup;
+      this.scene.add(setup.groundMesh);
+    }
+
+    // ─── generic effect runtime (particle systems + electric arc) ───
+    this.effect = null;
+    this.arcAnimate = null;
+    if (isElectricArcExample(this.data)) {
+      const { leftAnchor, rightAnchor, animate } = buildElectricArcScene(this.scene, this.camera);
+      const config = particleModule.prepareElectricArcConfig
+        ? prepareElectricArcConfig(this.data.config, this.backend)
+        : prepareElectricArcConfig(this.data.config, this.backend);
+      this.effect = particleModule.createElectricArc(config);
+      this.scene.add(this.effect.instance);
+      this.effect.bindEndpoints({ start: leftAnchor, end: rightAnchor });
+      this.arcAnimate = animate;
+    } else {
+      const useGPU = webgpuAvailable && this.backend === 'GPU';
+      const config = prepareConfig(
+        this.data.config,
+        this.data.textureId,
+        this.data.meshType,
+        useGPU
+      );
+      config.renderer = config.renderer || {};
+      // Only override renderer type when NOT on WebGPU (prepareConfig already
+      // forces POINTS → INSTANCED for WebGPU since point primitives are unsupported).
+      if (!webgpuAvailable && !isTrailExample(this.data) && !isMeshExample(this.data)) {
+        config.renderer.rendererType = this.rendererType;
+      }
+      if (this.softParticlesSetup) {
+        config.renderer.softParticles = {
+          enabled: true,
+          intensity: this.data.softParticlesIntensity || 1.5,
+          depthTexture: this.softParticlesSetup.renderTarget.depthTexture,
+        };
+      }
+      this.effect = createParticleSystem(config);
+      this.scene.add(this.effect.instance);
+    }
+
+    // RenderPipeline only for cards that declare postprocessing metadata
+    this.renderPipeline = createRenderPipelineFor(
+      this.renderer,
+      this.scene,
+      this.camera,
+      this.data.postprocessing
+    );
+
+    // Update card stats backend label — resolved backend, not just the toggle
+    const backendLabel = this.container.querySelector('.card-backend-label');
+    if (backendLabel) {
+      const actual =
+        this.effect?.backend ?? (this.computeEnabled && this.backend === 'GPU' ? 'GPU' : 'CPU');
+      backendLabel.textContent = actual;
+      backendLabel.style.color = actual === 'GPU' ? '#66bb6a' : '#4fc3f7';
+    }
+
+    this.animate();
+  }
+
+  animate() {
+    if (!this.effect) return;
+    const delta = this.clock.getDelta();
+    const elapsed = this.clock.getElapsedTime();
+    const now = performance.now();
+
+    const cycleData = { now: Date.now() - this.pausedDuration, delta, elapsed };
+    if (this.effect.update) {
+      this.effect.update(cycleData);
+    } else {
+      updateParticleSystems(cycleData);
+    }
+
+    // GPU compute dispatch (must run before render, not inside onBeforeRender)
+    if (this.effect.computeNode) {
+      this.renderer.compute(this.effect.computeNode);
+    }
+
+    // Moving conductor anchors — proves dynamic endpoint binding (§36)
+    if (this.arcAnimate) this.arcAnimate(elapsed);
+
+    // Soft particles: render depth pass first
+    if (this.softParticlesSetup) {
+      const { renderTarget } = this.softParticlesSetup;
+      // Hide particles during depth pass
+      this.effect.instance.visible = false;
+      this.renderer.setRenderTarget(renderTarget);
+      this.renderer.render(this.scene, this.camera);
+      this.renderer.setRenderTarget(null);
+      this.effect.instance.visible = true;
+    }
+
+    renderDemoView(this);
+
+    // FPS tracking
+    this.frames++;
+    this.fpsAccum += delta;
+    if (now - this.lastFpsUpdate > 500) {
+      const fps = this.fpsAccum > 0 ? this.frames / this.fpsAccum : 0;
+      const fpsEl = this.container.querySelector('.card-fps');
+      if (fpsEl) fpsEl.textContent = `${fps.toFixed(0)} FPS`;
+      this.frames = 0;
+      this.fpsAccum = 0;
+      this.lastFpsUpdate = now;
+    }
+
+    this.animationId = requestAnimationFrame(() => this.animate());
+  }
+
+  pause() {
+    if (this.paused || !this.animationId) return;
+    cancelAnimationFrame(this.animationId);
+    this.animationId = null;
+    this.paused = true;
+    this.pauseStartTime = Date.now();
+    this.clock.stop();
+  }
+
+  resume() {
+    if (!this.paused) return;
+    this.pausedDuration += Date.now() - this.pauseStartTime;
+    this.paused = false;
+    this.clock.start();
+    this.animate();
+  }
+
+  dispose() {
+    this.disposed = true;
+    if (this.animationId) cancelAnimationFrame(this.animationId);
+    if (this.effect) this.effect.dispose();
+    this.effect = null;
+    if (this.renderPipeline) this.renderPipeline.dispose?.();
+    this.renderPipeline = null;
+    if (this.softParticlesSetup) {
+      this.softParticlesSetup.renderTarget.dispose();
+    }
+    if (this.renderer) {
+      this.renderer.dispose();
+    }
+
+    const canvas = this.container.querySelector('canvas');
+    if (canvas) canvas.style.display = 'none';
+    const img = this.container.querySelector('.preview-img');
+    if (img) img.style.display = 'block';
+    const overlay = this.container.querySelector('.play-overlay');
+    if (overlay) overlay.style.display = 'flex';
+    const stopHint = this.container.querySelector('.stop-hint');
+    if (stopHint) stopHint.style.display = 'none';
+  }
+}
+
+function updateCardPlayPauseBtn(card, playing) {
+  const btn = card.querySelector('.playpause-btn');
+  if (!btn) return;
+  const playIcon = btn.querySelector('.play-icon');
+  const pauseIcon = btn.querySelector('.pause-icon');
+  btn.disabled = !activeCard || activeCard !== card;
+  const restartBtn = card.querySelector('.restart-btn');
+  if (restartBtn) restartBtn.disabled = btn.disabled;
+  if (playing) {
+    playIcon.style.display = 'none';
+    pauseIcon.style.display = 'block';
+    btn.title = 'Pause';
+    btn.classList.add('playing');
+  } else {
+    playIcon.style.display = 'block';
+    pauseIcon.style.display = 'none';
+    btn.title = 'Play';
+    btn.classList.remove('playing');
+  }
+}
+
+function stopActiveDemo() {
+  if (activeCard) {
+    activeCard._liveDemo.dispose();
+    activeCard._liveDemo = null;
+    activeCard.classList.remove('active');
+    updateCardPlayPauseBtn(activeCard, false);
+    const btn = activeCard.querySelector('.playpause-btn');
+    if (btn) btn.disabled = true;
+    const restartBtn = activeCard.querySelector('.restart-btn');
+    if (restartBtn) restartBtn.disabled = true;
+    activeCard = null;
+  }
+}
+
+function startDemo(card, exampleData) {
+  if (activeCard === card) {
+    gtag('event', 'click', { event_category: 'demo', event_label: 'stop', demo: exampleData.id });
+    stopActiveDemo();
+    return;
+  }
+  stopActiveDemo();
+  gtag('event', 'click', { event_category: 'demo', event_label: 'play', demo: exampleData.id });
+  const rendererType = cardRendererTypes.get(card) || 'POINTS';
+  const backend = cardBackendTypes.get(card) || 'CPU';
+  card._liveDemo = new LiveDemo(card, exampleData, rendererType, backend);
+  card.classList.add('active');
+  activeCard = card;
+  updateCardPlayPauseBtn(card, true);
+}
+
+// ─── Expanded demo for fullscreen modal ─────────────────────────────
+let expandDemo = null;
+let expandExampleData = null;
+let expandRendererType = 'POINTS';
+let expandBackendType = 'GPU';
+
+class ExpandedDemo {
+  constructor(canvas, exampleData, rendererType = 'POINTS', backend = 'CPU') {
+    this.canvas = canvas;
+    this.data = exampleData;
+    this.rendererType = rendererType;
+    this.backend = backend;
+    this.clock = new THREE.Clock();
+    this.frames = 0;
+    this.fpsAccum = 0;
+    this.tickAccum = 0;
+    this.lastFpsUpdate = 0;
+    this.paused = false;
+    this.pausedDuration = 0;
+    this.pauseStartTime = 0;
+    this.disposed = false;
+    this.init();
+  }
+
+  async init() {
+    const width = this.canvas.clientWidth || 800;
+    const height = this.canvas.clientHeight || 600;
+
+    this.renderer = new THREE.WebGPURenderer({
+      canvas: this.canvas,
+      antialias: true,
+      alpha: true,
+    });
+    await this.renderer.init();
+    if (this.disposed) {
+      this.renderer.dispose();
+      return;
+    }
+    // Public WebGPU init (particle + ElectricArc factories), per renderer.
+    this.computeEnabled = gpuModule?.enableWebGPU?.(this.renderer) ?? false;
+    if (isElectricArcExample(this.data)) {
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.05;
+    } else {
+      this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    }
+    this.renderer.setSize(width, height);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(45, width / height, 1, 100);
+    this.camera.position.set(0, 0, 15);
+    this.camera.lookAt(0, 0, 0);
+
+    // Soft particles: angled camera + ground plane + depth render target
+    this.softParticlesSetup = null;
+    if (isSoftParticlesExample(this.data)) {
+      this.camera.position.set(0, 4, 12);
+      this.camera.lookAt(0, -2, 0);
+      const setup = setupSoftParticlesScene(this.renderer, this.camera, width, height);
+      this.softParticlesSetup = setup;
+      this.scene.add(setup.groundMesh);
+    }
+
+    // ─── generic effect runtime (particle systems + electric arc) ───
+    this.effect = null;
+    this.arcAnimate = null;
+    if (isElectricArcExample(this.data)) {
+      const { leftAnchor, rightAnchor, animate } = buildElectricArcScene(this.scene, this.camera);
+      const config = prepareElectricArcConfig(this.data.config, this.backend);
+      this.effect = particleModule.createElectricArc(config);
+      this.scene.add(this.effect.instance);
+      this.effect.bindEndpoints({ start: leftAnchor, end: rightAnchor });
+      this.arcAnimate = animate;
+    } else {
+      const useGPU = webgpuAvailable && this.backend === 'GPU';
+      const config = prepareConfig(
+        this.data.config,
+        this.data.textureId,
+        this.data.meshType,
+        useGPU
+      );
+      config.renderer = config.renderer || {};
+      if (!webgpuAvailable && !isTrailExample(this.data) && !isMeshExample(this.data)) {
+        config.renderer.rendererType = this.rendererType;
+      }
+      if (this.softParticlesSetup) {
+        config.renderer.softParticles = {
+          enabled: true,
+          intensity: this.data.softParticlesIntensity || 1.5,
+          depthTexture: this.softParticlesSetup.renderTarget.depthTexture,
+        };
+      }
+      this.effect = createParticleSystem(config);
+      this.scene.add(this.effect.instance);
+    }
+
+    // RenderPipeline only for cards that declare postprocessing metadata
+    this.renderPipeline = createRenderPipelineFor(
+      this.renderer,
+      this.scene,
+      this.camera,
+      this.data.postprocessing
+    );
+
+    // Update backend label in stats bar (resolved backend, §40)
+    const backendLabel = document.getElementById('expand-backend-label');
+    if (backendLabel) {
+      const actual =
+        this.effect?.backend ?? (this.computeEnabled && this.backend === 'GPU' ? 'GPU' : 'CPU');
+      backendLabel.textContent = actual;
+      backendLabel.style.color = actual === 'GPU' ? '#66bb6a' : '#4fc3f7';
+    }
+
+    const label = document.getElementById('expand-renderer-label');
+    if (label) {
+      const actual = isElectricArcExample(this.data)
+        ? 'ARC'
+        : isTrailExample(this.data)
+          ? 'TRAIL'
+          : isMeshExample(this.data)
+            ? 'MESH'
+            : this.effect.instance instanceof THREE.Mesh
+              ? 'INSTANCED'
+              : 'POINTS';
+      label.textContent = actual;
+    }
+
+    this.startTime = performance.now();
+    this.animate();
+  }
+
+  animate() {
+    if (!this.effect) return;
+    const delta = this.clock.getDelta();
+    const elapsed = this.clock.getElapsedTime();
+    const now = performance.now();
+
+    const tickStart = performance.now();
+
+    const cycleData = { now: Date.now() - this.pausedDuration, delta, elapsed };
+    if (this.effect.update) {
+      this.effect.update(cycleData);
+    } else {
+      updateParticleSystems(cycleData);
+    }
+
+    // GPU compute dispatch (must run before render, not inside onBeforeRender)
+    if (this.effect.computeNode) {
+      this.renderer.compute(this.effect.computeNode);
+    }
+
+    // Moving conductor anchors — proves dynamic endpoint binding (§36)
+    if (this.arcAnimate) this.arcAnimate(elapsed);
+
+    // Soft particles: render depth pass first
+    if (this.softParticlesSetup) {
+      const { renderTarget } = this.softParticlesSetup;
+      this.effect.instance.visible = false;
+      this.renderer.setRenderTarget(renderTarget);
+      this.renderer.render(this.scene, this.camera);
+      this.renderer.setRenderTarget(null);
+      this.effect.instance.visible = true;
+    }
+
+    renderDemoView(this);
+
+    const tickTime = performance.now() - tickStart;
+
+    this.frames++;
+    this.fpsAccum += delta;
+    this.tickAccum += tickTime;
+    if (now - this.lastFpsUpdate > 500) {
+      const fps = this.fpsAccum > 0 ? this.frames / this.fpsAccum : 0;
+      const avgTick = this.frames > 0 ? this.tickAccum / this.frames : 0;
+      const fpsEl = document.getElementById('expand-fps');
+      const ftEl = document.getElementById('expand-frametime');
+      const elEl = document.getElementById('expand-elapsed');
+      if (fpsEl) fpsEl.textContent = `${fps.toFixed(1)} FPS`;
+      if (ftEl) ftEl.textContent = `${avgTick.toFixed(2)} ms/tick`;
+      if (elEl) elEl.textContent = `${elapsed.toFixed(1)}s`;
+      this.frames = 0;
+      this.fpsAccum = 0;
+      this.tickAccum = 0;
+      this.lastFpsUpdate = now;
+    }
+
+    this.animationId = requestAnimationFrame(() => this.animate());
+  }
+
+  pause() {
+    if (this.paused || !this.animationId) return;
+    cancelAnimationFrame(this.animationId);
+    this.animationId = null;
+    this.paused = true;
+    this.pauseStartTime = Date.now();
+    this.clock.stop();
+  }
+
+  resume() {
+    if (!this.paused) return;
+    this.pausedDuration += Date.now() - this.pauseStartTime;
+    this.paused = false;
+    this.clock.start();
+    this.animate();
+  }
+
+  resize() {
+    if (!this.renderer) return;
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    this.renderer.setSize(width, height);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    // Resize soft particles render target
+    if (this.softParticlesSetup) {
+      const pixelWidth = width * this.renderer.getPixelRatio();
+      const pixelHeight = height * this.renderer.getPixelRatio();
+      this.softParticlesSetup.renderTarget.setSize(pixelWidth, pixelHeight);
+    }
+  }
+
+  dispose() {
+    this.disposed = true;
+    if (this.animationId) cancelAnimationFrame(this.animationId);
+    if (this.effect) this.effect.dispose();
+    this.effect = null;
+    if (this.renderPipeline) this.renderPipeline.dispose?.();
+    this.renderPipeline = null;
+    if (this.softParticlesSetup) {
+      this.softParticlesSetup.renderTarget.dispose();
+    }
+    if (this.renderer) this.renderer.dispose();
+  }
+}
+
+function closeExpandModal() {
+  const overlay = document.getElementById('expand-overlay');
+  overlay.classList.remove('open');
+  if (expandDemo) {
+    expandDemo.dispose();
+    expandDemo = null;
+  }
+  expandExampleData = null;
+}
+
+function updateExpandPlayPauseBtn(playing) {
+  const btn = document.getElementById('expand-playpause-btn');
+  if (!btn) return;
+  const svg = btn.querySelector('svg');
+  if (playing) {
+    svg.innerHTML =
+      '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+    btn.title = 'Pause';
+    btn.classList.add('playing');
+  } else {
+    svg.innerHTML = '<polygon points="5,3 19,12 5,21"/>';
+    btn.title = 'Play';
+    btn.classList.remove('playing');
+  }
+}
+
+function openExpandModal(exampleData, rendererType, backend = 'GPU') {
+  const overlay = document.getElementById('expand-overlay');
+  const canvas = document.getElementById('expand-canvas');
+  const titleEl = document.getElementById('expand-title');
+
+  closeExpandModal();
+
+  titleEl.textContent = exampleData.title;
+  expandExampleData = exampleData;
+  expandRendererType = rendererType;
+  expandBackendType = backend;
+
+  // Backend (GPU/CPU) toggle
+  const backendToggle = document.getElementById('expand-backend-toggle');
+  if (webgpuAvailable) {
+    backendToggle.innerHTML = `
+      <button data-backend="CPU" title="CPU simulation (GLSL ShaderMaterial)">CPU</button>
+      <button data-backend="GPU" title="GPU compute simulation (TSL / WebGPU)">GPU</button>
+    `;
+    backendToggle.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.backend === backend);
+    });
+    backendToggle.style.display = '';
+  } else {
+    backendToggle.innerHTML = '';
+    backendToggle.style.display = 'none';
+  }
+
+  overlay.classList.add('open');
+  updateExpandPlayPauseBtn(true);
+
+  requestAnimationFrame(() => {
+    expandDemo = new ExpandedDemo(canvas, exampleData, rendererType, backend);
+  });
+}
+
+// Expand modal event handlers
+document.getElementById('expand-close').addEventListener('click', closeExpandModal);
+document.getElementById('expand-overlay').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('expand-overlay')) closeExpandModal();
+});
+document.getElementById('expand-backend-toggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-backend]');
+  if (!btn) return;
+  const backend = btn.dataset.backend;
+  const toggle = document.getElementById('expand-backend-toggle');
+  toggle.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+  btn.classList.add('active');
+  expandBackendType = backend;
+  if (expandDemo && expandExampleData) {
+    expandDemo.dispose();
+    const canvas = document.getElementById('expand-canvas');
+    expandDemo = new ExpandedDemo(canvas, expandExampleData, expandRendererType, backend);
+    updateExpandPlayPauseBtn(true);
+  }
+});
+
+document.getElementById('expand-playpause-btn').addEventListener('click', () => {
+  if (!expandDemo) return;
+  if (expandDemo.paused) {
+    expandDemo.resume();
+    updateExpandPlayPauseBtn(true);
+  } else {
+    expandDemo.pause();
+    updateExpandPlayPauseBtn(false);
+  }
+});
+
+document.getElementById('expand-restart-btn').addEventListener('click', () => {
+  if (!expandExampleData) return;
+  if (expandDemo) expandDemo.dispose();
+  const canvas = document.getElementById('expand-canvas');
+  expandDemo = new ExpandedDemo(canvas, expandExampleData, expandRendererType, expandBackendType);
+  updateExpandPlayPauseBtn(true);
+});
+
+document.getElementById('expand-copy-btn').addEventListener('click', () => {
+  if (!expandExampleData) return;
+  gtag('event', 'click', {
+    event_category: 'config_action',
+    event_label: 'copy',
+    demo: expandExampleData.id,
+  });
+  const btn = document.getElementById('expand-copy-btn');
+  const json = JSON.stringify(expandExampleData.config, null, 2);
+  navigator.clipboard.writeText(json).then(() => {
+    btn.classList.add('copied');
+    setTimeout(() => btn.classList.remove('copied'), 1500);
+  });
+});
+
+document.getElementById('expand-download-btn').addEventListener('click', () => {
+  if (!expandExampleData) return;
+  gtag('event', 'click', {
+    event_category: 'config_action',
+    event_label: 'download',
+    demo: expandExampleData.id,
+  });
+  const json = JSON.stringify(expandExampleData.config, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${expandExampleData.id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ─── Build the page ──────────────────────────────────────────────────
+const grid = document.getElementById('examples-grid');
+
+// Feature-gated cards: older package versions in the switcher simply don't
+// show cards whose required export is missing (§33).
+const availableExamples = examples.filter(
+  (example) =>
+    !example.requiresFeature || typeof particleModule[example.requiresFeature] === 'function'
+);
+
+availableExamples.forEach((example) => {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="card-canvas-wrapper">
+      <img class="preview-img" src="previews/${example.id}.webp" alt="${example.title} preview" />
+      <canvas style="display:none"></canvas>
+      <div class="play-overlay">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="23" stroke="rgba(255,255,255,0.8)" stroke-width="2"/>
+          <polygon points="19,14 19,34 36,24" fill="rgba(255,255,255,0.9)"/>
+        </svg>
+      </div>
+      <div class="stop-hint" style="display:none">
+        <span>Click to stop</span>
+      </div>
+      <div class="card-stats">
+        <span class="card-fps">-- FPS</span>
+        <span class="card-backend-label"></span>
+      </div>
+    </div>
+    <div class="card-info">
+      <h3>${example.title}</h3>
+      <p>${example.description}</p>
+      <div class="card-tags">
+        ${example.tags.map((t) => `<span class="tag">${t}</span>`).join(' ')}
+      </div>
+      <div class="card-controls">
+        <div class="card-btns">
+          ${
+            webgpuAvailable
+              ? `<div class="backend-toggle">
+              <button data-backend="CPU" title="CPU simulation (GLSL ShaderMaterial)">CPU</button>
+              <button class="active" data-backend="GPU" title="GPU compute simulation (TSL / WebGPU)">GPU</button>
+            </div>`
+              : ''
+          }
+          <button class="icon-btn playpause-btn" title="Play" disabled>
+            <svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5,3 19,12 5,21"/>
+            </svg>
+            <svg class="pause-icon" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+            </svg>
+          </button>
+          <button class="icon-btn restart-btn" title="Restart" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+          </button>
+          <button class="icon-btn expand-btn" title="Open fullscreen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 3 21 3 21 9"/>
+              <polyline points="9 21 3 21 3 15"/>
+              <line x1="21" y1="3" x2="14" y2="10"/>
+              <line x1="3" y1="21" x2="10" y2="14"/>
+            </svg>
+          </button>
+          <button class="icon-btn copy-btn" title="Copy config to clipboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+          <button class="icon-btn download-btn" title="Download config JSON">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  grid.appendChild(card);
+
+  cardRendererTypes.set(card, getConfigRendererType(example));
+  cardBackendTypes.set(card, webgpuAvailable ? 'GPU' : 'CPU');
+
+  const backendToggle = card.querySelector('.backend-toggle');
+  if (backendToggle) {
+    backendToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const btn = e.target.closest('button[data-backend]');
+      if (!btn) return;
+      const backend = btn.dataset.backend;
+      backendToggle.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      cardBackendTypes.set(card, backend);
+      if (activeCard === card) {
+        stopActiveDemo();
+        startDemo(card, example);
+      }
+    });
+  }
+
+  card.querySelector('.playpause-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (activeCard !== card || !card._liveDemo) return;
+    if (card._liveDemo.paused) {
+      card._liveDemo.resume();
+      updateCardPlayPauseBtn(card, true);
+    } else {
+      card._liveDemo.pause();
+      updateCardPlayPauseBtn(card, false);
+    }
+  });
+
+  card.querySelector('.restart-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (activeCard !== card) return;
+    const rendererType = cardRendererTypes.get(card) || 'POINTS';
+    const backend = cardBackendTypes.get(card) || 'CPU';
+    if (card._liveDemo) {
+      card._liveDemo.dispose();
+      card._liveDemo = null;
+    }
+    card._liveDemo = new LiveDemo(card, example, rendererType, backend);
+    updateCardPlayPauseBtn(card, true);
+  });
+
+  card.querySelector('.expand-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openExpandModal(
+      example,
+      cardRendererTypes.get(card) || 'POINTS',
+      cardBackendTypes.get(card) || 'CPU'
+    );
+  });
+
+  card.querySelector('.copy-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    gtag('event', 'click', {
+      event_category: 'config_action',
+      event_label: 'copy',
+      demo: example.id,
+    });
+    const btn = e.currentTarget;
+    const json = JSON.stringify(example.config, null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+      btn.classList.add('copied');
+      setTimeout(() => btn.classList.remove('copied'), 1500);
+    });
+  });
+
+  card.querySelector('.download-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    gtag('event', 'click', {
+      event_category: 'config_action',
+      event_label: 'download',
+      demo: example.id,
+    });
+    const json = JSON.stringify(example.config, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${example.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  card.addEventListener('click', () => startDemo(card, example));
+});
+
+// ─── Benchmark UI ───────────────────────────────────────────────────
+(async () => {
+  const overlay = document.getElementById('bench-overlay');
+  const openBtn = document.getElementById('bench-open-btn');
+  const closeBtn = document.getElementById('bench-close');
+  const versionsContainer = document.getElementById('bench-versions');
+  const runBtn = document.getElementById('bench-run');
+  const abortBtn = document.getElementById('bench-abort');
+  const statusEl = document.getElementById('bench-status');
+  const chartCanvas = document.getElementById('bench-chart');
+  const iframeHost = document.getElementById('bench-iframe-host');
+  const selectAllBtn = document.getElementById('bench-select-all');
+  const selectNoneBtn = document.getElementById('bench-select-none');
+
+  if (!overlay) return;
+
+  let runner = null;
+
+  // Populate version checkboxes
+  let versions;
+  try {
+    versions = await getAvailableVersions();
+  } catch {
+    versionsContainer.innerHTML = '<span style="color:#666">Could not load versions</span>';
+    return;
+  }
+
+  versionsContainer.innerHTML = versions
+    .map(
+      (v, i) =>
+        `<label><input type="checkbox" value="${v}"${i < 3 ? ' checked' : ''} /><span>${v}${i === 0 ? ' (latest)' : ''}</span></label>`
+    )
+    .join('');
+
+  selectAllBtn.addEventListener('click', () => {
+    versionsContainer.querySelectorAll('input').forEach((cb) => (cb.checked = true));
+  });
+  selectNoneBtn.addEventListener('click', () => {
+    versionsContainer.querySelectorAll('input').forEach((cb) => (cb.checked = false));
+  });
+
+  // Metric tabs
+  const metricTabs = document.getElementById('bench-metric-tabs');
+  metricTabs.innerHTML = Object.entries(METRICS)
+    .map(
+      ([key, m]) =>
+        `<button class="bench-metric-tab${key === 'fps' ? ' active' : ''}" data-metric="${key}">${m.label}</button>`
+    )
+    .join('');
+
+  metricTabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('.bench-metric-tab');
+    if (!btn) return;
+    metricTabs.querySelectorAll('.bench-metric-tab').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (runner) {
+      runner.chart.setMetric(btn.dataset.metric);
+    }
+  });
+
+  // Open / close modal
+  openBtn.addEventListener('click', () => {
+    stopActiveDemo();
+    overlay.classList.add('open');
+    if (runner) runner.resizeChart();
+  });
+  closeBtn.addEventListener('click', () => {
+    if (runner && runner.running) runner.abort();
+    overlay.classList.remove('open');
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      if (runner && runner.running) runner.abort();
+      overlay.classList.remove('open');
+    }
+  });
+
+  // Run benchmark
+  runBtn.addEventListener('click', async () => {
+    const selected = [...versionsContainer.querySelectorAll('input:checked')].map((cb) => cb.value);
+
+    if (selected.length === 0) {
+      statusEl.textContent = 'Select at least one version.';
+      return;
+    }
+
+    runner = new BenchmarkRunner({
+      chartCanvas,
+      statusEl,
+      iframeContainer: iframeHost,
+    });
+    const activeTab = metricTabs.querySelector('.bench-metric-tab.active');
+    if (activeTab) runner.chart.setMetric(activeTab.dataset.metric);
+    runner.resizeChart();
+
+    runBtn.disabled = true;
+    abortBtn.disabled = false;
+
+    if (typeof gtag === 'function') {
+      gtag('event', 'benchmark_start', {
+        event_category: 'benchmark',
+        event_label: selected.join(','),
+      });
+    }
+
+    await runner.run(selected);
+
+    runBtn.disabled = false;
+    abortBtn.disabled = true;
+  });
+
+  // Abort
+  abortBtn.addEventListener('click', () => {
+    if (runner) runner.abort();
+    runBtn.disabled = false;
+    abortBtn.disabled = true;
+  });
+
+  // Resize chart and expand modal on window resize
+  window.addEventListener('resize', () => {
+    if (runner) runner.resizeChart();
+    if (expandDemo) expandDemo.resize();
+  });
+})();

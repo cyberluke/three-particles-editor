@@ -179,5 +179,16 @@ describe('isConfigV2', () => {
       // This is a mixed config, but we should identify it as pre-v2.0.0 for safety
       expect(isConfigV2(config)).toBe(false);
     });
+
+    test('should identify the electric-arc flat subsystem config as v2', () => {
+      const config = {
+        kind: 'electric-arc',
+        start: { x: -1.1, y: 0, z: 0 },
+        end: { x: 1.1, y: 0, z: 0 },
+        chaos: 0.19,
+        seed: 271,
+      };
+      expect(isConfigV2(config)).toBe(true);
+    });
   });
 });

@@ -17,6 +17,22 @@ export default [
       'dist/**',
       // Generated engine mirrors (tsup output + minified bundle), verified via scripts/gate-*.mjs
       'public/lib/**',
+      'public/index.js',
+      'public/index.d.ts',
+      'public/webgpu.js',
+      'public/chunk-*.js',
+      'public/three-particles*.js',
+      // Scratch artifacts (probes / one-shot dumps, regenerated on demand)
+      'tmp/**',
+      'tmp*',
+      'out_*.js',
+      't1.js',
+      'vs.tmp.js',
+      'bundle-dl.js',
+      'served_bundle.js',
+      'reg-editor*.json',
+      'publish-*.log',
+      'packages/*.log',
     ],
   },
 
@@ -31,6 +47,8 @@ export default [
         ...globals.browser,
         ...globals.node,
         ...globals.es2021,
+        // Analytics loader stub declared inline in public/examples.html
+        gtag: 'readonly',
       },
     },
     plugins: {
@@ -68,6 +86,7 @@ export default [
       },
       globals: {
         ...globals.browser,
+        gtag: 'readonly',
       },
     },
     plugins: {

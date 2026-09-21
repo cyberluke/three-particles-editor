@@ -5,7 +5,7 @@ The best-in-class particle framework for Three.js — now with a WebGPU compute 
 Why it stands out:
 
 - **WebGPU compute** — gravity, velocity, 7 lifetime modifiers, point/directional force fields + collision planes and 3D simplex noise run in Three.js TSL compute kernels: 50K–350K+ textured particles at full framerate, one draw call. (The CPU path used to be the bottleneck for real 350K+ counts — the whole simulation was reworked around compute; emission, sub-emitters and `updateConfig()` remain CPU, the TRAIL renderer always simulates on CPU.)
-- **Four renderer types in the exported config** — `POINTS` billboard quads, `INSTANCED` sprites (no `gl_PointSize` limit), `TRAIL` ribbons with width/opacity/color tapering, `MESH` debris/gems/coins with full 3D rotation and lighting.
+- **Five renderer types in the exported config** — `POINTS` billboard quads, `INSTANCED` sprites (no `gl_PointSize` limit), `TRAIL` ribbons with width/opacity/color tapering, `MESH` debris/gems/coins with full 3D rotation and lighting, `FLUID` volumetric-metaball liquid (sphere normals, Beer-Lambert absorption, Fresnel reflections).
 - **Unity-familiar workflow** — bursts, sub-emitters, collision planes (kill/clamp/bounce), Bézier over-lifetime curves baked to 256-sample lookups; every example ships as a copy-paste config.
 - **Pinned versions** — three.js r186 (`"three": "^0.186.0"`), svelte 5 editor. With this engine we do not recommend react-three-fiber for now: react 19.3 is breaking it upstream ([react-three-fiber#3915](https://github.com/pmndrs/react-three-fiber/issues/3915)) — use three.js r186+ directly.
 - **Offline gallery** — all example modules, three.js builds and textures are mirrored as static files, so the whole page works without a network.

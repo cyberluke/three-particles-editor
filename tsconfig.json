@@ -25,6 +25,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.svelte"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.svelte",
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.d.ts"
+  ],
   "exclude": ["node_modules/*", "public/*", "src/**/*.js"]
 }

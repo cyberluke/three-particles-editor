@@ -2,7 +2,6 @@
   import Dialog, { Title, Content, Actions } from '@smui/dialog';
   import Button, { Label } from '@smui/button';
   import Paper from '@smui/paper';
-  import KofiButton from '../ko-fi-button/ko-fi-button.svelte';
 
   let { open = $bindable(false) } = $props();
 </script>
@@ -60,7 +59,6 @@
           If you find this editor useful, consider supporting its development! Your support helps
           maintain and improve this tool for the community.
         </p>
-        <KofiButton fullWidth={true} utmCampaign="about_modal" />
       </div>
     </Paper>
   </Content>

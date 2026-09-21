@@ -13,9 +13,11 @@ import {
 } from './three-particles-editor/save-and-load';
 import {
   createParticleSystem,
+  createElectricArc,
   getDefaultParticleSystemConfig,
   updateParticleSystems,
 } from '@cyberluke/three-particles';
+import type { ElectricArc, ElectricArcConfig } from '@cyberluke/three-particles';
 import { enableWebGPU } from '@cyberluke/three-particles/webgpu';
 import { convertToNewFormat } from './three-particles-editor/config-converter';
 import {
@@ -30,6 +32,7 @@ import {
   getComputeDispatchCount,
   resetComputeFailure,
   getComputeFailure,
+  frameFluidCamera,
 } from './three-particles-editor/world';
 import { getTexture, initAssets, loadCustomAssets } from './three-particles-editor/assets';
 
@@ -56,6 +59,7 @@ import { createForceFieldEntries } from './three-particles-editor/entries/force-
 import { createCollisionPlaneEntries } from './three-particles-editor/entries/collision-plane-entries';
 import { createTrailEntries } from './three-particles-editor/entries/trail-entries';
 import { createMeshEntries, createGeometry } from './three-particles-editor/entries/mesh-entries';
+import { createElectricArcEntries } from './three-particles-editor/entries/electric-arc-entries';
 import { generateDefaultName } from './utils/name-utils';
 
 type ConfigMetadata = {
@@ -189,7 +193,7 @@ const cycleData: CycleData = { pauseStartTime: 0, totalPauseTime: 0, now: 0, del
 
 let scene: THREE.Scene;
 let particleSystemContainer: Object3D;
-let particleSystem: ParticleSystem | null = null;
+let particleSystem: ParticleSystem | ElectricArc | null = null;
 let clock: THREE.Clock;
 let isPaused = false;
 let configDirty = false;
@@ -412,7 +416,16 @@ const animate = (): void => {
     if (!updateFatal) {
       try {
         configEntries.forEach(({ onUpdate }) => onUpdate && onUpdate(cycleData));
-        if (particleSystemConfig._editorData.useIndividualUpdate && particleSystem) {
+        if ((particleSystemConfig as { kind?: string }).kind === 'electric-arc') {
+          // Electric arc subsystem: same per-frame contract as a particle
+          // system but self-managed (no shared batch registry).
+          const arc = getActiveConfig();
+          if (particleSystem && arc?.kind === 'electric-arc') {
+            particleSystem.update(cycleData);
+          } else if (particleSystem) {
+            particleSystem.update(cycleData);
+          }
+        } else if (particleSystemConfig._editorData.useIndividualUpdate && particleSystem) {
           particleSystem.update(cycleData);
         } else {
           updateParticleSystems(cycleData);
@@ -573,6 +586,44 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     cycleData.totalPauseTime = 0;
   }
 
+  // ── Electric Arc subsystem branch (§1/§34): a distinct first-class
+  //    engine feature with the same structural contract
+  //    (`instance` / `update()` / `computeNode` / `dispose()`).
+  if ((activeConfig as { kind?: string })?.kind === 'electric-arc') {
+    // Loaded flat JSON is the section config itself (`start` present).
+    const arcCfg = (activeConfig as { start?: unknown }).start
+      ? (activeConfig as unknown as ElectricArcConfig)
+      : ((activeConfig as { config?: ElectricArcConfig }).config as ElectricArcConfig);
+    try {
+      particleSystem = createElectricArc(arcCfg);
+    } catch (e) {
+      const msg = (e as Error)?.message ?? String(e);
+      console.error('[ARC:fatal] createElectricArc failed:', msg);
+      if (backendBadge) {
+        backendBadge.textContent = 'FATAL';
+        backendBadge.style.background = '#a33';
+        backendBadge.title = msg;
+      }
+      return;
+    }
+    if (backendBadge) {
+      const arcBackend = (particleSystem as ElectricArc).backend;
+      backendBadge.textContent = `simulation: ${arcBackend === 'GPU' ? 'GPU' : 'CPU'} · material: TSL · effect: electric-arc`;
+      backendBadge.style.background = arcBackend === 'GPU' ? '#2e7d32' : '#555';
+    }
+    particleSystemContainer.clear();
+    particleSystemContainer.add((particleSystem as ElectricArc).instance);
+    configEntries.forEach(
+      ({ onParticleSystemChange }) =>
+        onParticleSystemChange &&
+        onParticleSystemChange(particleSystem as unknown as ParticleSystem)
+    );
+    if (markAsDirty && !isInitializing) {
+      configDirty = true;
+    }
+    return;
+  }
+
   // Resolve textures for sub-emitters (map is not serialized, only textureId is)
   resolveSubEmitterTextures(activeConfig);
 
@@ -642,9 +693,9 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
 
   // Apply to the converted copy so the editor-side config stays unchanged for
   // serialization and for lil-gui references.
-  convertedConfig.simulationBackend = (useGPUCompute
-    ? 'GPU'
-    : 'CPU') as typeof convertedConfig.simulationBackend;
+  convertedConfig.simulationBackend = (
+    useGPUCompute ? 'GPU' : 'CPU'
+  ) as typeof convertedConfig.simulationBackend;
   if (!convertedConfig.renderer)
     convertedConfig.renderer = {} as NonNullable<typeof convertedConfig.renderer>;
   // `materialBackend` is not part of the published `Renderer` type but is
@@ -691,12 +742,14 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
   // the engine (`effective renderer` + `requested rendererType`).
   if (backendBadge) {
     const isGPU = !!particleSystem.computeNode;
-    const rrDbg = (particleSystem as unknown as {
-      gpuDebug?: {
-        effectiveRendererType?: string;
-        requestedRendererType?: string;
-      };
-    }).gpuDebug;
+    const rrDbg = (
+      particleSystem as unknown as {
+        gpuDebug?: {
+          effectiveRendererType?: string;
+          requestedRendererType?: string;
+        };
+      }
+    ).gpuDebug;
     const effective = rrDbg?.effectiveRendererType ?? 'POINTS';
     const requested = rrDbg?.requestedRendererType ?? 'POINTS';
     backendBadge.textContent = `simulation: ${isGPU ? 'GPU' : 'CPU'} · material: ${
@@ -730,6 +783,12 @@ const doFullRecreate = (activeConfig: any, markAsDirty: boolean): void => {
     );
   }, 2000);
   particleSystemContainer.add(particleSystem.instance);
+  // Re-frame the perspective camera so each WaterBall-style lattice fits the
+  // viewport in the exact orbit the reference demo uses. Runs for every full
+  // recreate so slider edits to `mlsMpm.boxSize` / `sph.halfBoxSize` (or
+  // switching `renderer.fluid.solver`) keep the box centred, matching the
+  // `onLoad` framing on `window.editor.load()` / `loadFromClipboard()`.
+  frameFluidCameraFromConfig();
   configEntries.forEach(
     ({ onParticleSystemChange }) => onParticleSystemChange && onParticleSystemChange(particleSystem)
   );
@@ -765,6 +824,29 @@ const subEditorDefaults = {
     { position: 0, color: { r: 255, g: 255, b: 255, a: 255 } },
     { position: 1, color: { r: 255, g: 255, b: 255, a: 0 } },
   ],
+};
+
+/**
+ * Applies the reference camera framing for the two WaterBall lattices: the
+ * MLS-MPM box `[40,30,60]` (orbit distance 70) or the SPH half-box (distance
+ * from its `y` half-extent). Non-fluid renderers keep the editor's default
+ * camera untouched.
+ */
+const frameFluidCameraFromConfig = (): void => {
+  const rendererCfg = particleSystemConfig.renderer as unknown as {
+    rendererType?: string;
+    fluid?: { solver?: string };
+    mlsMpm?: { boxSize?: number[] };
+    sph?: { halfBoxSize?: number[] };
+  };
+  if (rendererCfg?.rendererType !== 'FLUID') return;
+  if (String(rendererCfg.fluid?.solver ?? '').toUpperCase() === 'SPH') {
+    const hb = rendererCfg.sph?.halfBoxSize ?? [1, 2, 1];
+    frameFluidCamera(3.0, [0, -hb[1] + 0.1, 0]);
+    return;
+  }
+  const box = rendererCfg.mlsMpm?.boxSize ?? [40, 30, 60];
+  frameFluidCamera(70, [box[0] / 2, box[1] / 4, box[2] / 2]);
 };
 
 const deepMerge = (target: any, source: any): any => {
@@ -909,9 +991,12 @@ const destroyPanel = (): void => {
 const createPanel = (config: any = particleSystemConfig): void => {
   const isSubEmitter = editorContext.type === 'subEmitter';
   const depth = editorContextStack.length;
+  const isArc = (config as { kind?: string })?.kind === 'electric-arc';
   const panelTitle = isSubEmitter
     ? `Sub-Emitter ${(editorContext.subEmitterIndex ?? 0) + 1}${depth > 1 ? ` (Level ${depth})` : ''}`
-    : 'Particle System Editor';
+    : isArc
+      ? 'Electric Arc Editor'
+      : 'Particle System Editor';
 
   const panel = new GUI({
     width: 310,
@@ -924,6 +1009,21 @@ const createPanel = (config: any = particleSystemConfig): void => {
   if (isSubEmitter) {
     const navObj = { backToParent: switchToParent };
     panel.add(navObj, 'backToParent').name('<< Back to Parent');
+  }
+
+  // Electric Arc subsystem: dedicated panel bound straight onto the flat
+  // section config; no generic particle sections (§34).
+  if (isArc) {
+    configEntries.push(
+      createElectricArcEntries({
+        parentFolder: panel,
+        particleSystemConfig: config,
+        getParticleSystem: () => particleSystem as unknown as ElectricArc,
+        recreate: () => recreateParticleSystem(true),
+      })
+    );
+    recreateParticleSystem(false);
+    return;
   }
 
   // Mutable controller references for big numbers toggle
@@ -1157,6 +1257,7 @@ window.editor = {
         configEntries.length = 0;
         createPanel();
         configEntries.forEach(({ onReset }) => onReset && onReset());
+        frameFluidCameraFromConfig();
       },
     });
     isInitializing = false;
@@ -1175,6 +1276,7 @@ window.editor = {
         configEntries.length = 0;
         createPanel();
         configEntries.forEach(({ onReset }) => onReset && onReset());
+        frameFluidCameraFromConfig();
         isInitializing = false;
         configDirty = false;
       },

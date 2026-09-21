@@ -1,10 +1,74 @@
-import Easing from './easing-functions.js?v=11';
-import * as THREE3 from './three.module.js?v=11';
-import { ObjectUtils } from './three-utils/index.js?v=11';
-import { StorageBufferAttribute } from './three.webgpu.js?v=11';
+import {
+  blendingMap,
+  resolveSimulationBackend,
+  calculateValue,
+  S_SIZE,
+  S_COLOR_A,
+  S_COLOR_R,
+  S_COLOR_G,
+  S_COLOR_B,
+  S_ROTATION,
+  SCALAR_STRIDE,
+} from './chunk-CLTF56CS.js';
+export {
+  CollisionPlaneMode,
+  EmitFrom,
+  ForceFieldFalloff,
+  ForceFieldType,
+  LifeTimeCurve,
+  RendererType,
+  SCALAR_STRIDE,
+  S_COLOR_A,
+  S_COLOR_B,
+  S_COLOR_G,
+  S_COLOR_R,
+  S_IS_ACTIVE,
+  S_LIFETIME,
+  S_ROTATION,
+  S_SIZE,
+  S_START_FRAME,
+  S_START_LIFETIME,
+  Shape,
+  SimulationBackend,
+  SimulationSpace,
+  SubEmitterTrigger,
+  TimeMode,
+  assertNamed,
+  blendingMap,
+  calculateRandomPositionAndVelocityOnBox,
+  calculateRandomPositionAndVelocityOnCircle,
+  calculateRandomPositionAndVelocityOnCone,
+  calculateRandomPositionAndVelocityOnRectangle,
+  calculateRandomPositionAndVelocityOnSphere,
+  calculateValue,
+  createBezierCurveFunction,
+  createDefaultMeshTexture,
+  createDefaultParticleTexture,
+  createParticleSystem,
+  getBezierCacheSize,
+  getCurveFunctionFromConfig,
+  getDefaultParticleSystemConfig,
+  isComputeCapableRenderer,
+  isLifeTimeCurve,
+  linearToSRGB,
+  normalizeBackgroundToVector3,
+  normalizeDepthTextureValue,
+  normalizeTextureValue,
+  normalizeVector2Value,
+  prefillFluidState,
+  registerTSLMaterialFactory,
+  removeBezierCurveFunction,
+  resolveSimulationBackend,
+  resolveWebGPUEffectiveRendererType,
+  rgbSRGBToLinear,
+  sRGBToLinear,
+  updateParticleSystems,
+} from './chunk-CLTF56CS.js';
+import * as THREE4 from 'three';
+import Easing from 'easing-functions';
 
 // src/js/effects/three-particles/version.ts
-var REVISION = '4.0.1';
+var REVISION = '4.0.4';
 if (typeof globalThis !== 'undefined') {
   const g = globalThis;
   if (g.__THREE_PARTICLES__ && g.__THREE_PARTICLES__ !== REVISION) {
@@ -14,72 +78,1459 @@ if (typeof globalThis !== 'undefined') {
   }
 }
 
-// src/js/effects/three-particles/color-utils.ts
-var sRGBToLinear = (c) => (c < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-var linearToSRGB = (c) => (c < 31308e-7 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
-var rgbSRGBToLinear = (c) => ({
-  r: sRGBToLinear(c.r ?? 0),
-  g: sRGBToLinear(c.g ?? 0),
-  b: sRGBToLinear(c.b ?? 0),
-});
-
-// src/js/effects/three-particles/three-particles-bezier.ts
-var cache = [];
-var nCr = (n, k) => {
-  let z = 1;
-  for (let i = 1; i <= k; i++) z *= (n + 1 - i) / i;
-  return z;
+// src/js/effects/electric-arc/electric-arc-defaults.ts
+var ELECTRIC_ARC_TIER_SEGMENTS = {
+  low: 32,
+  medium: 64,
+  high: 96,
+  cinematic: 128,
 };
-var createBezierCurveFunction = (particleSystemId, bezierPoints) => {
-  const cacheEntry = cache.find((item) => item.bezierPoints === bezierPoints);
-  if (cacheEntry) {
-    if (!cacheEntry.referencedBy.includes(particleSystemId))
-      cacheEntry.referencedBy.push(particleSystemId);
-    return cacheEntry.curveFunction;
+var ELECTRIC_ARC_TIERS = {
+  low: {
+    segments: 32,
+    contacts: true,
+    lighting: false,
+    sparks: 0,
+    branches: false,
+  },
+  medium: {
+    segments: 64,
+    contacts: true,
+    lighting: true,
+    sparks: 4,
+    branches: false,
+  },
+  high: {
+    segments: 96,
+    contacts: true,
+    lighting: true,
+    sparks: 6,
+    branches: true,
+  },
+  cinematic: {
+    segments: 128,
+    contacts: true,
+    lighting: true,
+    sparks: 7,
+    branches: true,
+  },
+};
+var ELECTRIC_ARC_PRESET_CINEMATIC = {
+  color: '#baff63',
+  coreColor: '#fffde0',
+  thickness: 0.04,
+  chaos: 0.19,
+  speed: 1,
+  segments: 128,
+  intensity: 12,
+  flickerHz: 24,
+  endpointPinning: 0.72,
+  glow: {
+    enabled: true,
+    width: 7.5,
+    intensity: 1.4,
+    profile: 'gaussian',
+  },
+  contact: {
+    enabled: true,
+    radius: 0.075,
+    intensity: 15,
+  },
+  lighting: {
+    enabled: true,
+    endpointIntensity: 30,
+    midpointIntensity: 14,
+    distance: 1.6,
+    decay: 2,
+  },
+};
+var ELECTRIC_ARC_BASE = {
+  color: 12255075,
+  coreColor: 16776672,
+  thickness: 0.04,
+  chaos: 0.35,
+  speed: 1,
+  segments: 96,
+  flickerHzDefault: lerpChaosToFlicker(0.35),
+  intensity: 10,
+  endpointPinning: 0.72,
+  glow: { enabled: true, width: 6, intensity: 1.2, profile: 'gaussian' },
+  contact: { enabled: true, radius: 0.07, intensity: 15 },
+  lighting: {
+    enabled: false,
+    endpointIntensity: 1,
+    midpointIntensity: 0.45,
+    distance: 3,
+    decay: 2,
+  },
+  sparks: {
+    enabled: false,
+    rate: 6,
+    lifetime: [0.08, 0.25],
+    speed: [0.6, 2.8],
+    size: [0.05, 0.3],
+  },
+  branches: {
+    enabled: false,
+    maxCount: 3,
+    probability: 0.15,
+    length: [0.08, 0.28],
+    thicknessScale: [0.18, 0.42],
+  },
+};
+function lerpChaosToFlicker(c) {
+  return 8 + (42 - 8) * Math.min(1, Math.max(0, c));
+}
+
+// src/js/effects/electric-arc/electric-arc-math.ts
+var u32 = (n) => n >>> 0;
+var pcgRawU32Scalar = (seedU) => {
+  const s = u32(Math.imul(u32(seedU), 747796405) + 2891336453);
+  const shifted = s >>> ((s >>> 28) + 4);
+  let word = u32(shifted ^ s);
+  word = u32(Math.imul(word, 277803737));
+  return u32((word >>> 22) ^ word);
+};
+var pcg01Scalar = (seedU) => pcgRawU32Scalar(seedU) * (1 / 4294967296);
+var mixSeedScalar = (a, b, c) => u32(u32(Math.imul(u32(a), 2654435761)) ^ u32(b) ^ u32(c));
+var dischargeHash = (seed, epoch, cellIndex, axis) =>
+  pcg01Scalar(mixSeedScalar(mixSeedScalar(cellIndex, seed, 1), epoch, axis + 2));
+var clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+var lerp = (a, b, t) => a + (b - a) * t;
+var coarseOffset = (seed, epoch, t, coarseKnots, axis) => {
+  const cellF = t * coarseKnots;
+  const cell0 = Math.floor(cellF);
+  const f = cellF - cell0;
+  const h0 = dischargeHash(seed, epoch, cell0, axis) * 2 - 1;
+  const h1 = dischargeHash(seed, epoch, cell0 + 1, axis) * 2 - 1;
+  return h0 + (h1 - h0) * f;
+};
+var chaosAmplitude = (distance, chaosity) => {
+  const a = distance * lerp(25e-4, 0.045, Math.pow(clamp(chaosity, 0, 1), 1.6));
+  return clamp(a, 25e-4, Math.max(0.05, distance * 0.25));
+};
+var PULSE_MAX_SLOTS = 21;
+var PULSE_RISE = 0.15;
+var PULSE_DECAY = 3;
+var PULSE_DEG_GAIN = 0.5;
+var PULSE_DEG_WIDTH = 0.5;
+var pulseEnvelope = (f) => {
+  if (f <= 0) return 0;
+  if (f < PULSE_RISE) return f / PULSE_RISE;
+  return Math.exp(-PULSE_DECAY * (f - PULSE_RISE));
+};
+var _pulseW = new Float32Array(PULSE_MAX_SLOTS);
+var pulseOffset = (seed, epoch, t, slots, axis) => {
+  const n = Math.min(PULSE_MAX_SLOTS, Math.max(1, Math.round(slots)));
+  const wXor = u32(11 * (Math.round(axis) + 1));
+  const lvlXor = u32(Math.round(axis) + 2);
+  const clsXor = u32(Math.round(axis) + 5);
+  const degXor = u32(Math.round(axis) + 9);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const w = 0.3 + 0.7 * pcg01Scalar(mixSeedScalar(i + 1, seed, epoch) ^ wXor);
+    _pulseW[i] = w;
+    total += w;
   }
-  const entry = {
-    referencedBy: [particleSystemId],
-    bezierPoints,
-    curveFunction: (percentage) => {
-      if (percentage < 0) return bezierPoints[0].y;
-      if (percentage > 1) return bezierPoints[bezierPoints.length - 1].y;
-      let start = 0;
-      let stop = bezierPoints.length - 1;
-      for (let i = 0; i < bezierPoints.length; i++) {
-        const point = bezierPoints[i];
-        if (percentage < (point.percentage ?? 0)) {
-          stop = i;
-          break;
+  const inv = total > 0 ? 1 / total : 1;
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    const b0 = acc;
+    acc += _pulseW[i] * inv;
+    const wN = acc - b0;
+    if (t < acc || i === n - 1) {
+      const degOn = pcg01Scalar(mixSeedScalar(i + 900, seed, epoch) ^ degXor) < 0.25;
+      const slotW = degOn ? wN * 0.5 : wN;
+      if (t >= b0 + slotW && t < acc) return 0;
+      const cls = pcg01Scalar(mixSeedScalar(i + 128, seed, epoch) ^ clsXor);
+      const fRaw = t < b0 ? 0 : Math.min(1, (t - b0) / Math.max(slotW, 1e-6));
+      const f = Math.min(fRaw, 0.999999);
+      const level = pcg01Scalar(mixSeedScalar(i, seed, epoch) ^ lvlXor) * 2 - 1;
+      let out;
+      if (cls < 0.2) {
+        out = 0;
+      } else if (cls < 0.4) {
+        out = level;
+      } else {
+        out = level * pulseEnvelope(f);
+      }
+      if (degOn) out *= PULSE_DEG_GAIN;
+      return out;
+    }
+  }
+  return 0;
+};
+var ORGANIC_HOLD_START = 0.45;
+var ORGANIC_HOLD_SPAN = 0.4;
+var organicOffset = (seed, epoch, t, knots, axis) => {
+  const n = Math.min(PULSE_MAX_SLOTS, Math.max(1, Math.round(knots)));
+  const ax = Math.round(axis);
+  const lvlXor = u32(ax + 2);
+  const holdXor = u32(31 * (ax + 1));
+  const cellF = t * n;
+  const cell0 = Math.floor(cellF);
+  const f = cellF - cell0;
+  const c1 = cell0 + 1 > n ? n : cell0 + 1;
+  const h0 = pcg01Scalar(mixSeedScalar(Math.min(cell0, n), seed, epoch) ^ lvlXor) * 2 - 1;
+  const h1 = pcg01Scalar(mixSeedScalar(c1, seed, epoch) ^ lvlXor) * 2 - 1;
+  const holdFrac =
+    ORGANIC_HOLD_START +
+    ORGANIC_HOLD_SPAN * pcg01Scalar(mixSeedScalar(Math.min(cell0, n) + 700, seed, epoch) ^ holdXor);
+  if (f >= holdFrac) return h1;
+  const g = f / holdFrac;
+  const e = g * g * (3 - 2 * g);
+  return h0 + (h1 - h0) * e;
+};
+var chaosFlickerHz = (chaosity) => lerp(8, 42, clamp(chaosity, 0, 1));
+var PULSE_THIN_MIN = 0.55;
+var widthFactor = (ou, ov) => {
+  const rot = Math.sqrt(ou * ou + ov * ov);
+  return 1 - (1 - PULSE_THIN_MIN) * clamp(Math.min(1.4142136, rot), 0, 1);
+};
+var DEG = Math.PI / 180;
+var rotateZ2 = (v, deg) => {
+  if (!deg) return v;
+  const r = deg * DEG;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  const x = v.x * c - v.y * s;
+  const y = v.x * s + v.y * c;
+  v.x = x;
+  v.y = y;
+  return v;
+};
+var globalFlicker = (seed, epoch) => 0.78 + 0.27 * pcg01Scalar(mixSeedScalar(seed, epoch, 7));
+
+// src/js/effects/electric-arc/electric-arc-config.ts
+var toVec3 = (p, out) => {
+  if (!p) return out.set(0, 0, 0);
+  return out.set(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+};
+var isPlainObj = (v) => typeof v === 'object' && v !== null;
+var nextElectricArcSeed = () =>
+  pcg01Scalar(mixSeedScalar(Date.now(), Math.floor(Math.random() * 16777216) || 1, 3)) * 16777215;
+function normalizeElectricArcConfig(config) {
+  const tier = config.quality ? ELECTRIC_ARC_TIERS[config.quality] : null;
+  const segments = Math.round(config.segments ?? (tier ? tier.segments : 96));
+  const chaosity = clamp(config.chaos ?? 0.35, 0, 1);
+  const start = toVec3(config.start, new THREE4.Vector3());
+  const end = toVec3(config.end, new THREE4.Vector3());
+  const distance = Math.max(end.distanceTo(start), 1e-4);
+  const color = new THREE4.Color(config.color ?? 12255075);
+  const coreColor = new THREE4.Color(config.coreColor ?? 16776672);
+  const seed =
+    config.seed !== void 0 && Number.isFinite(config.seed)
+      ? Math.trunc(config.seed) >>> 0
+      : nextElectricArcSeed() >>> 0;
+  const sparksLifetime =
+    Array.isArray(config.sparks?.lifetime) && config.sparks.lifetime.length === 2
+      ? config.sparks.lifetime
+      : [0.08, 0.25];
+  const sparksSpeed =
+    Array.isArray(config.sparks?.speed) && config.sparks.speed.length === 2
+      ? config.sparks.speed
+      : [0.6, 2.8];
+  const sparksSize =
+    Array.isArray(config.sparks?.size) && config.sparks.size.length === 2
+      ? config.sparks.size
+      : [0.05, 0.3];
+  const branchLength =
+    Array.isArray(config.branches?.length) && config.branches.length.length === 2
+      ? config.branches.length
+      : [0.08, 0.28];
+  const branchThickness =
+    Array.isArray(config.branches?.thicknessScale) && config.branches.thicknessScale.length === 2
+      ? config.branches.thicknessScale
+      : [0.18, 0.42];
+  const glowWidth = Math.max(1, config.glow?.width ?? 6);
+  const normalized = {
+    simulationBackend: config.simulationBackend ?? 'AUTO' /* AUTO */,
+    start,
+    end,
+    color: colorToNumber(color),
+    coreColor: colorToNumber(coreColor),
+    thickness: config.thickness ?? 0.04,
+    chaos: chaosity,
+    chaosAlgorithm:
+      config.chaosAlgorithm === 'pulse'
+        ? 'pulse'
+        : config.chaosAlgorithm === 'organic'
+          ? 'organic'
+          : 'linear',
+    speed: config.speed ?? 1,
+    segments: clamp(segments, 8, 512),
+    seed,
+    flickerHz: config.flickerHz ?? chaosFlickerHz(chaosity),
+    intensity: config.intensity ?? 10,
+    endpointPinning: clamp(config.endpointPinning ?? 0.72, 0, 4),
+    rotationZ: Number.isFinite(config.rotationZ) ? Number(config.rotationZ) : 0,
+    glow: {
+      enabled: config.glow?.enabled ?? true,
+      width: glowWidth,
+      intensity: config.glow?.intensity ?? 1.2,
+      profile: config.glow?.profile === 'triangle' ? 'triangle' : 'gaussian',
+    },
+    contact: {
+      enabled: config.contact?.enabled ?? true,
+      radius: config.contact?.radius ?? 0.07,
+      intensity: config.contact?.intensity ?? 15,
+    },
+    lighting: {
+      enabled: isPlainObj(config.lighting) ? !!config.lighting.enabled : false,
+      endpointIntensity: config.lighting?.endpointIntensity ?? 1,
+      midpointIntensity: config.lighting?.midpointIntensity ?? 0.45,
+      distance: config.lighting?.distance ?? 3,
+      decay: config.lighting?.decay ?? 2,
+    },
+    sparks: {
+      enabled: isPlainObj(config.sparks)
+        ? (config.sparks.enabled ?? (!!tier && tier.sparks > 0))
+        : !!tier && tier.sparks > 0,
+      rate: config.sparks?.rate ?? (tier && tier.sparks > 0 ? tier.sparks : 6),
+      lifetime: sparksLifetime,
+      speed: sparksSpeed,
+      size: sparksSize,
+    },
+    branches: {
+      enabled: isPlainObj(config.branches)
+        ? (config.branches.enabled ?? (!!tier && tier.branches))
+        : !!tier && tier.branches,
+      maxCount: Math.round(config.branches?.maxCount ?? 3),
+      probability: config.branches?.probability ?? 0.15,
+      length: branchLength,
+      thicknessScale: branchThickness,
+    },
+    amplitude: chaosAmplitude(distance, chaosity),
+    coarseKnots: Math.round(lerp(4, 20, chaosity)),
+    microFrequency: lerp(15, 75, chaosity),
+    brightnessVariation: lerp(0.05, 0.38, chaosity),
+    branchProbability: Math.pow(chaosity, 2) * 0.32,
+  };
+  if (!normalized.branches.enabled) normalized.branches.probability = 0;
+  if (normalized.branches.enabled && config.branches?.probability === void 0) {
+    normalized.branches.probability =
+      normalized.branchProbability || normalized.branches.probability;
+  }
+  return normalized;
+}
+function colorToNumber(c) {
+  const r = Math.round(clamp(c.r, 0, 1) * 255);
+  const g = Math.round(clamp(c.g, 0, 1) * 255);
+  const b = Math.round(clamp(c.b, 0, 1) * 255);
+  return (r << 16) | (g << 8) | b;
+}
+var fin = (v, fb) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+};
+function touchesStructuralField(config) {
+  return (
+    config.segments !== void 0 ||
+    config.quality !== void 0 ||
+    config.simulationBackend !== void 0 ||
+    config.chaosAlgorithm !== void 0
+  );
+}
+function mergeLiveConfig(target, patch) {
+  if (patch.start !== void 0) toVec3(patch.start, target.start);
+  if (patch.end !== void 0) toVec3(patch.end, target.end);
+  if (patch.color !== void 0) target.color = colorToNumber(new THREE4.Color(patch.color));
+  if (patch.coreColor !== void 0)
+    target.coreColor = colorToNumber(new THREE4.Color(patch.coreColor));
+  if (patch.thickness !== void 0) target.thickness = patch.thickness;
+  if (patch.speed !== void 0) target.speed = patch.speed;
+  if (patch.flickerHz !== void 0) target.flickerHz = patch.flickerHz;
+  if (patch.intensity !== void 0) target.intensity = patch.intensity;
+  if (patch.endpointPinning !== void 0) target.endpointPinning = clamp(patch.endpointPinning, 0, 4);
+  if (patch.rotationZ !== void 0)
+    target.rotationZ = Number.isFinite(patch.rotationZ)
+      ? Number(patch.rotationZ)
+      : target.rotationZ;
+  if (patch.glow?.intensity !== void 0) target.glow.intensity = patch.glow.intensity;
+  if (patch.glow?.enabled !== void 0) target.glow.enabled = patch.glow.enabled;
+  if (patch.glow?.width !== void 0) target.glow.width = Math.max(1, patch.glow.width);
+  if (patch.glow?.profile !== void 0)
+    target.glow.profile = patch.glow.profile === 'triangle' ? 'triangle' : 'gaussian';
+  if (patch.contact?.enabled !== void 0) target.contact.enabled = patch.contact.enabled;
+  if (patch.contact?.radius !== void 0) target.contact.radius = patch.contact.radius;
+  if (patch.contact?.intensity !== void 0) target.contact.intensity = patch.contact.intensity;
+  if (patch.lighting?.enabled !== void 0) target.lighting.enabled = patch.lighting.enabled;
+  if (patch.lighting?.endpointIntensity !== void 0)
+    target.lighting.endpointIntensity = patch.lighting.endpointIntensity;
+  if (patch.lighting?.midpointIntensity !== void 0)
+    target.lighting.midpointIntensity = patch.lighting.midpointIntensity;
+  if (patch.lighting?.distance !== void 0) target.lighting.distance = patch.lighting.distance;
+  if (patch.lighting?.decay !== void 0) target.lighting.decay = patch.lighting.decay;
+  if (patch.sparks?.enabled !== void 0) target.sparks.enabled = patch.sparks.enabled;
+  if (patch.sparks?.rate !== void 0) target.sparks.rate = patch.sparks.rate;
+  if (patch.sparks) {
+    const sp = patch.sparks;
+    if (Array.isArray(sp.lifetime) && sp.lifetime.length === 2)
+      target.sparks.lifetime = [
+        fin(sp.lifetime[0], target.sparks.lifetime[0]),
+        fin(sp.lifetime[1], target.sparks.lifetime[1]),
+      ];
+    if (Array.isArray(sp.speed) && sp.speed.length === 2)
+      target.sparks.speed = [
+        fin(sp.speed[0], target.sparks.speed[0]),
+        fin(sp.speed[1], target.sparks.speed[1]),
+      ];
+    if (Array.isArray(sp.size) && sp.size.length === 2)
+      target.sparks.size = [
+        fin(sp.size[0], target.sparks.size[0]),
+        fin(sp.size[1], target.sparks.size[1]),
+      ];
+  }
+  if (patch.chaosAlgorithm !== void 0)
+    target.chaosAlgorithm =
+      patch.chaosAlgorithm === 'pulse'
+        ? 'pulse'
+        : patch.chaosAlgorithm === 'organic'
+          ? 'organic'
+          : 'linear';
+  if (patch.simulationBackend !== void 0) target.simulationBackend = patch.simulationBackend;
+  if (patch.chaos !== void 0 && Number.isFinite(patch.chaos)) {
+    const c = clamp(patch.chaos, 0, 1);
+    target.chaos = c;
+    const distance = Math.max(target.end.distanceTo(target.start), 1e-4);
+    target.amplitude = chaosAmplitude(distance, c);
+    target.coarseKnots = Math.round(lerp(4, 20, c));
+    target.microFrequency = lerp(15, 75, c);
+    target.brightnessVariation = lerp(0.05, 0.38, c);
+    target.branchProbability = Math.pow(c, 2) * 0.32;
+    if (patch.flickerHz === void 0) target.flickerHz = chaosFlickerHz(c);
+  }
+}
+var radialProfile = (d, k) => Math.exp(-d * d * k);
+var triangleProfile = (d, k) => {
+  const slope = Math.sqrt(0.55 * k);
+  const v = 1 - Math.abs(d) * slope;
+  return v > 0 ? v : 0;
+};
+var profileValue = (d, k, kind = 'gaussian') =>
+  kind === 'triangle' ? triangleProfile(d, k) : radialProfile(d, k);
+var fillProfileTexture = (data, size, k, kind) => {
+  const innerK = k * 0.16;
+  for (let i = 0; i < size; i++) {
+    const d = (i / (size - 1)) * 2 - 1;
+    const core = profileValue(d, k, kind);
+    const inner = profileValue(d, innerK, kind);
+    const a = Math.min(1, core + inner * 0.35);
+    const o = i * 4;
+    data[o] = 255;
+    data[o + 1] = 255;
+    data[o + 2] = 255;
+    data[o + 3] = Math.max(0, Math.min(255, Math.round(a * 255)));
+  }
+};
+function createProfileTexture(size, k, kind = 'gaussian') {
+  const data = new Uint8Array(size * 4);
+  fillProfileTexture(data, size, k, kind);
+  const tex = new THREE4.DataTexture(data, size, 1, THREE4.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.minFilter = THREE4.LinearFilter;
+  tex.magFilter = THREE4.LinearFilter;
+  return tex;
+}
+function writeProfileTexture(tex, size, k, kind) {
+  const img = tex.image;
+  if (!img?.data) return;
+  fillProfileTexture(img.data, size, k, kind);
+  tex.needsUpdate = true;
+}
+function createContactTexture(size = 64) {
+  const data = new Uint8Array(size * size * 4);
+  const half = (size - 1) / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - half) / half;
+      const dy = (y - half) / half;
+      const r2 = dx * dx + dy * dy;
+      const a = r2 > 1 ? 0 : Math.min(1, Math.exp(-r2 * 6) + Math.exp(-r2 * 1.7) * 0.4);
+      const o = (y * size + x) * 4;
+      data[o] = 255;
+      data[o + 1] = 255;
+      data[o + 2] = 255;
+      data[o + 3] = Math.round(a * 255);
+    }
+  }
+  const tex = new THREE4.DataTexture(data, size, size, THREE4.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.minFilter = THREE4.LinearFilter;
+  tex.magFilter = THREE4.LinearFilter;
+  return tex;
+}
+function createContactSprites(radius, intensity, color, texture) {
+  const baseColor = new THREE4.Color(color);
+  const scale = Math.max(radius * 2, 0.01);
+  const mk = () => {
+    const mat = new THREE4.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      blending: THREE4.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    mat.color.setRGB(baseColor.r * intensity, baseColor.g * intensity, baseColor.b * intensity);
+    const s = new THREE4.Sprite(mat);
+    s.scale.set(scale, scale, 1);
+    return s;
+  };
+  const start = mk();
+  const end = mk();
+  const group = new THREE4.Group();
+  group.add(start);
+  group.add(end);
+  return {
+    group,
+    start,
+    end,
+    materials: [start.material, end.material],
+    baseScale: scale,
+  };
+}
+function updateContactSprites(start, end, sx, sy, sz, ex, ey, ez, flicker, baseScale) {
+  const s = baseScale * (0.96 + 0.04 * flicker);
+  start.scale.set(s, s, 1);
+  end.scale.set(s, s, 1);
+  start.position.set(sx, sy, sz);
+  end.position.set(ex, ey, ez);
+}
+function buildRibbonGeometry(segments) {
+  const vertexCount = segments * 2;
+  const geometry = new THREE4.BufferGeometry();
+  const positionArray = new Float32Array(vertexCount * 3);
+  const uvArray = new Float32Array(vertexCount * 2);
+  const arcIndexArr = new Float32Array(vertexCount);
+  const arcSideArr = new Float32Array(vertexCount);
+  const index = new Uint16Array((segments - 1) * 6);
+  const inv = 1 / (segments - 1);
+  for (let s = 0; s < segments; s++) {
+    const u = s * inv;
+    const li = s * 2;
+    const ri = li + 1;
+    uvArray[li * 2] = u;
+    uvArray[li * 2 + 1] = 0;
+    uvArray[ri * 2] = u;
+    uvArray[ri * 2 + 1] = 1;
+    arcIndexArr[li] = s;
+    arcIndexArr[ri] = s;
+    arcSideArr[li] = -1;
+    arcSideArr[ri] = 1;
+  }
+  for (let s = 0; s < segments - 1; s++) {
+    const l0 = s * 2;
+    const r0 = l0 + 1;
+    const l1 = l0 + 2;
+    const r1 = l1 + 1;
+    const o = s * 6;
+    index[o] = l0;
+    index[o + 1] = r0;
+    index[o + 2] = l1;
+    index[o + 3] = r0;
+    index[o + 4] = r1;
+    index[o + 5] = l1;
+  }
+  geometry.setAttribute('position', new THREE4.BufferAttribute(positionArray, 3));
+  geometry.setAttribute('uv', new THREE4.BufferAttribute(uvArray, 2));
+  const arcIndex = new THREE4.BufferAttribute(arcIndexArr, 1);
+  const arcSide = new THREE4.BufferAttribute(arcSideArr, 1);
+  geometry.setAttribute('arcIndex', arcIndex);
+  geometry.setAttribute('arcSide', arcSide);
+  geometry.setIndex(new THREE4.BufferAttribute(index, 1));
+  geometry.boundingSphere = new THREE4.Sphere(new THREE4.Vector3(), 8);
+  return { geometry, positionArray, arcIndex, arcSide };
+}
+
+// src/js/effects/electric-arc/electric-arc-noise.ts
+var GRAD3 = new Float32Array([
+  1, 1, 0, -1, 1, 0, 1, -1, 0, -1, -1, 0, 1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, -1, 0, 1, 1, 0, -1, 1,
+  0, 1, -1, 0, -1, -1,
+]);
+var F3 = 1 / 3;
+var G3 = 1 / 6;
+var snoise3 = (x, y, z) => {
+  const s = (x + y + z) * F3;
+  const i = Math.floor(x + s);
+  const j = Math.floor(y + s);
+  const k = Math.floor(z + s);
+  const t = (i + j + k) * G3;
+  const x0 = x - (i - t);
+  const y0 = y - (j - t);
+  const z0 = z - (k - t);
+  let i1, j1, k1;
+  let i2, j2, k2;
+  if (x0 >= y0) {
+    if (y0 >= z0) {
+      i1 = 1;
+      j1 = 0;
+      k1 = 0;
+      i2 = 1;
+      j2 = 1;
+      k2 = 0;
+    } else if (x0 >= z0) {
+      i1 = 1;
+      j1 = 0;
+      k1 = 0;
+      i2 = 1;
+      j2 = 0;
+      k2 = 1;
+    } else {
+      i1 = 0;
+      j1 = 0;
+      k1 = 1;
+      i2 = 1;
+      j2 = 0;
+      k2 = 1;
+    }
+  } else {
+    if (y0 < z0) {
+      i1 = 0;
+      j1 = 0;
+      k1 = 1;
+      i2 = 0;
+      j2 = 1;
+      k2 = 1;
+    } else if (x0 < z0) {
+      i1 = 0;
+      j1 = 1;
+      k1 = 0;
+      i2 = 0;
+      j2 = 1;
+      k2 = 1;
+    } else {
+      i1 = 0;
+      j1 = 1;
+      k1 = 0;
+      i2 = 1;
+      j2 = 1;
+      k2 = 0;
+    }
+  }
+  const x1 = x0 - i1 + G3;
+  const y1 = y0 - j1 + G3;
+  const z1 = z0 - k1 + G3;
+  const x2 = x0 - i2 + 2 * G3;
+  const y2 = y0 - j2 + 2 * G3;
+  const z2 = z0 - k2 + 2 * G3;
+  const x3 = x0 - 1 + 3 * G3;
+  const y3 = y0 - 1 + 3 * G3;
+  const z3 = z0 - 1 + 3 * G3;
+  const ii = i & 255;
+  const jj = j & 255;
+  const kk = k & 255;
+  let n = 0;
+  let m = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
+  if (m > 0) {
+    const g = (ii % 12) * 3;
+    m *= m;
+    n += m * m * (GRAD3[g] * x0 + GRAD3[g + 1] * y0 + GRAD3[g + 2] * z0);
+  }
+  m = 0.6 - x1 * x1 - y1 * y1 - z1 * z1;
+  if (m > 0) {
+    const g = (((ii + i1) % 12) + (jj + j1) + (kk + k1)) % 12;
+    const gg = g * 3;
+    m *= m;
+    n += m * m * (GRAD3[gg] * x1 + GRAD3[gg + 1] * y1 + GRAD3[gg + 2] * z1);
+  }
+  m = 0.6 - x2 * x2 - y2 * y2 - z2 * z2;
+  if (m > 0) {
+    const g = ((((ii + i2) % 12) + (jj + j2) + (kk + k2)) % 12) | 0;
+    const gg = g * 3;
+    m *= m;
+    n += m * m * (GRAD3[gg] * x2 + GRAD3[gg + 1] * y2 + GRAD3[gg + 2] * z2);
+  }
+  m = 0.6 - x3 * x3 - y3 * y3 - z3 * z3;
+  if (m > 0) {
+    const g = (((ii + 1) % 12) + (jj + 1) + (kk + 1)) % 12;
+    const gg = g * 3;
+    m *= m;
+    n += m * m * (GRAD3[gg] * x3 + GRAD3[gg + 1] * y3 + GRAD3[gg + 2] * z3);
+  }
+  return n * 0.8389;
+};
+var microNoise = (t, time, microFrequency, channel) => {
+  const p = t * microFrequency;
+  return (
+    snoise3(p, time, channel) * 0.6 +
+    snoise3(p * 2.13, time * 2.13, channel) * 0.27 +
+    snoise3(p * 4.71, time * 4.71, channel) * 0.13
+  );
+};
+var impulseNoise = (t, time, microFrequency, channel) =>
+  snoise3(t * microFrequency * 2.7 + 11.37, time * 1.7 + 3.1, channel + 9.7);
+
+// src/js/effects/electric-arc/electric-arc-cpu.ts
+var N_ARC = 0.68;
+var N_MICRO = 0.24;
+var N_IMPULSE = 0.08;
+var _dir = new THREE4.Vector3();
+var _helper = new THREE4.Vector3();
+var _basisU = new THREE4.Vector3();
+var _basisV = new THREE4.Vector3();
+var _tangent = new THREE4.Vector3();
+var _prev = new THREE4.Vector3();
+var _next = new THREE4.Vector3();
+var _camRight = new THREE4.Vector3();
+function createElectricArcCpu(config) {
+  const cfg = config;
+  const root = new THREE4.Group();
+  root.name = 'electric-arc-cpu';
+  const seg = cfg.segments;
+  const maxKnots = 21;
+  const center = new Float32Array(seg * 4);
+  const widths = new Float32Array(seg);
+  const knotsU = new Float32Array(maxKnots);
+  const knotsV = new Float32Array(maxKnots);
+  let lastEpoch = -1;
+  let lastKnots = -1;
+  const PROFILE_SIZE = 48;
+  const coreMap = createProfileTexture(PROFILE_SIZE, 700, cfg.glow.profile);
+  const innerMap = createProfileTexture(PROFILE_SIZE, 70, cfg.glow.profile);
+  const haloMap = createProfileTexture(PROFILE_SIZE, 8, cfg.glow.profile);
+  let lastProfile = cfg.glow.profile;
+  const arcColor = new THREE4.Color(cfg.color);
+  const coreColor = new THREE4.Color(cfg.coreColor);
+  const makeLayer = (segments, halfWidth, color, map) => {
+    const geometry = buildRibbonGeometry(segments);
+    const brightnessArr = new Float32Array(segments * 2 * 3);
+    geometry.geometry.setAttribute('color', new THREE4.BufferAttribute(brightnessArr, 3));
+    const material = new THREE4.MeshBasicMaterial({
+      transparent: true,
+      blending: THREE4.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false,
+      vertexColors: true,
+      side: THREE4.DoubleSide,
+      map,
+    });
+    material.color.copy(color);
+    const mesh = new THREE4.Mesh(geometry.geometry, material);
+    mesh.frustumCulled = false;
+    return { geometry, mesh, material, halfWidth };
+  };
+  const glowOuter = Math.max(2, cfg.glow.width);
+  const layers = [
+    makeLayer(seg, cfg.thickness * 0.5, coreColor.clone().multiplyScalar(cfg.intensity), coreMap),
+    makeLayer(
+      seg,
+      cfg.thickness * 0.5 * 2,
+      arcColor.clone().multiplyScalar(cfg.glow.intensity * 0.8),
+      innerMap
+    ),
+    makeLayer(
+      seg,
+      cfg.thickness * 0.5 * glowOuter,
+      arcColor.clone().multiplyScalar(cfg.glow.intensity * 0.4),
+      haloMap
+    ),
+  ];
+  const layerAll = [...layers];
+  for (const l of layers) root.add(l.mesh);
+  const branchSegments = 8;
+  const branches = [];
+  if (cfg.branches.enabled && cfg.branches.maxCount > 0) {
+    for (let b = 0; b < cfg.branches.maxCount; b++) {
+      const [ts0, ts1] = cfg.branches.thicknessScale;
+      const w = ts0 + (ts1 - ts0) * 0.5;
+      const coreL = makeLayer(
+        branchSegments,
+        cfg.thickness * w,
+        coreColor.clone().multiplyScalar(cfg.intensity * 0.8),
+        coreMap
+      );
+      const glowL = makeLayer(
+        branchSegments,
+        cfg.thickness * w * 3,
+        arcColor.clone().multiplyScalar(cfg.glow.intensity * 0.7),
+        innerMap
+      );
+      root.add(coreL.mesh);
+      root.add(glowL.mesh);
+      const branch = {
+        core: coreL,
+        glow: glowL,
+        center: new Float32Array(branchSegments * 4),
+        w: new Float32Array(branchSegments),
+      };
+      branches.push(branch);
+      layerAll.push(coreL, glowL);
+    }
+  }
+  const contactTex = createContactTexture(64);
+  const contacts = cfg.contact.enabled
+    ? createContactSprites(cfg.contact.radius, cfg.contact.intensity, cfg.color, contactTex)
+    : null;
+  if (contacts) root.add(contacts.group);
+  const coarseKind =
+    cfg.chaosAlgorithm === 'pulse'
+      ? 'pulse'
+      : cfg.chaosAlgorithm === 'organic'
+        ? 'organic'
+        : 'linear';
+  const rebuildKnots = (epoch) => {
+    const kn = clamp(cfg.coarseKnots, 1, maxKnots - 1);
+    for (let c = 0; c <= kn; c++) {
+      knotsU[c] = coarseOffset(cfg.seed, epoch, c, kn, 0);
+      knotsV[c] = coarseOffset(cfg.seed, epoch, c, kn, 1);
+    }
+    lastKnots = kn;
+  };
+  const brightness = (i, epoch, flicker) =>
+    clamp(
+      flicker *
+        (1 +
+          cfg.brightnessVariation *
+            (mixSeedScalar(i + 1, cfg.seed, epoch) * (1 / 4294967296) - 0.5) *
+            2),
+      0.15,
+      1.6
+    );
+  const update = (cycle, start, end) => {
+    const sx = start.x,
+      sy = start.y,
+      sz = start.z;
+    const ex = end.x,
+      ey = end.y,
+      ez = end.z;
+    _dir.set(ex - sx, ey - sy, ez - sz);
+    const dist = Math.max(_dir.length(), 1e-4);
+    _dir.multiplyScalar(1 / dist);
+    if (_dir.y < 0.85 && _dir.y > -0.85) _helper.set(0, 1, 0);
+    else _helper.set(1, 0, 0);
+    _basisU.crossVectors(_dir, _helper).normalize();
+    _basisV.crossVectors(_dir, _basisU).normalize();
+    const bUx = _basisU.x,
+      bUy = _basisU.y,
+      bUz = _basisU.z;
+    const bVx = _basisV.x,
+      bVy = _basisV.y,
+      bVz = _basisV.z;
+    const epoch = Math.floor(cycle.elapsed * cfg.flickerHz * cfg.speed);
+    if (epoch !== lastEpoch || cfg.coarseKnots !== lastKnots) {
+      rebuildKnots(epoch);
+      lastEpoch = epoch;
+    }
+    const flicker = globalFlicker(cfg.seed, epoch);
+    const amp = cfg.amplitude;
+    const pin = cfg.endpointPinning;
+    const time = cycle.elapsed * cfg.speed;
+    const mf = cfg.microFrequency;
+    const kn = clamp(cfg.coarseKnots, 1, maxKnots - 1);
+    const inv = 1 / (seg - 1);
+    const ux0 = ex - sx,
+      uy0 = ey - sy,
+      uz0 = ez - sz;
+    for (let i = 0; i < seg; i++) {
+      const t = i * inv;
+      const env =
+        i === 0 ? 0 : i === seg - 1 ? 0 : Math.pow(Math.max(Math.sin(Math.PI * t), 0), pin);
+      let cu;
+      let cvs;
+      if (coarseKind === 'linear') {
+        const cellF = t * kn;
+        const cell0 = Math.floor(cellF);
+        const fCell = cellF - cell0;
+        const c1 = cell0 + 1 > kn ? kn : cell0 + 1;
+        const ku0 = knotsU[cell0];
+        const ku1 = knotsU[c1];
+        const kv0 = knotsV[cell0];
+        const kv1 = knotsV[c1];
+        cu = ku0 + (ku1 - ku0) * fCell;
+        cvs = kv0 + (kv1 - kv0) * fCell;
+      } else if (coarseKind === 'pulse') {
+        cu = pulseOffset(cfg.seed, epoch, t, kn, 0);
+        cvs = pulseOffset(cfg.seed, epoch, t, kn, 1);
+      } else {
+        cu = organicOffset(cfg.seed, epoch, t, kn, 0);
+        cvs = organicOffset(cfg.seed, epoch, t, kn, 1);
+      }
+      const ou =
+        N_ARC * cu +
+        N_MICRO * microNoise(t, time, mf, 0) +
+        N_IMPULSE * impulseNoise(t, time, mf, 0);
+      const ov =
+        N_ARC * cvs +
+        N_MICRO * microNoise(t, time, mf, 1) +
+        N_IMPULSE * impulseNoise(t, time, mf, 1);
+      let x = sx + ux0 * t;
+      let y = sy + uy0 * t;
+      let z = sz + uz0 * t;
+      x += (bUx * ou + bVx * ov) * amp * env;
+      y += (bUy * ou + bVy * ov) * amp * env;
+      z += (bUz * ou + bVz * ov) * amp * env;
+      widths[i] = widthFactor(ou * env, ov * env);
+      if (i === 0) {
+        x = sx;
+        y = sy;
+        z = sz;
+      } else if (i === seg - 1) {
+        x = ex;
+        y = ey;
+        z = ez;
+      }
+      const o = i * 4;
+      center[o] = x;
+      center[o + 1] = y;
+      center[o + 2] = z;
+      center[o + 3] = brightness(i, epoch, flicker);
+    }
+    if (branches.length > 0) {
+      const prob = cfg.branchProbability || cfg.branches.probability || 0.04;
+      const invB = 1 / (branchSegments - 1);
+      const [l0, l1] = cfg.branches.length;
+      const [ts0, ts1] = cfg.branches.thicknessScale;
+      for (let b = 0; b < branches.length; b++) {
+        const bc = branches[b];
+        const h = mixSeedScalar(b + 1, cfg.seed, epoch) * (1 / 4294967296);
+        const active = h < prob ? 1 : 0;
+        const oT = mixSeedScalar(b, cfg.seed, 11) * (1 / 4294967296);
+        const originIdx = Math.min(Math.round(oT * (seg - 1)), seg - 1);
+        const oo0 = originIdx * 4;
+        const ox = center[oo0],
+          oy = center[oo0 + 1],
+          oz = center[oo0 + 2];
+        const dh = (ch) => mixSeedScalar(b, cfg.seed, ch) * (2 / 4294967296) - 1;
+        let dxn = dh(13),
+          dyn = dh(14),
+          dzn = dh(15);
+        const dl = Math.sqrt(dxn * dxn + dyn * dyn + dzn * dzn) || 1;
+        dxn /= dl;
+        dyn /= dl;
+        dzn /= dl;
+        const len = l0 + (l1 - l0) * (mixSeedScalar(b, cfg.seed, 16) * (1 / 4294967296));
+        const scaleA = active ? len : 0;
+        const w = ts0 + (ts1 - ts0) * (mixSeedScalar(b, cfg.seed, 17) * (1 / 4294967296));
+        const wf = widths[originIdx];
+        for (let i = 0; i < branchSegments; i++) bc.w[i] = wf;
+        const bend = dh(18) * 0.28;
+        const cX = ox + (dxn * 0.5 + bUx * bend) * scaleA;
+        const cY = oy + (dyn * 0.5 + bUy * bend) * scaleA;
+        const cZ = oz + (dzn * 0.5 + bUz * bend) * scaleA;
+        const eX = ox + dxn * scaleA;
+        const eY = oy + dyn * scaleA;
+        const eZ = oz + dzn * scaleA;
+        for (let i = 0; i < branchSegments; i++) {
+          const s = i * invB;
+          const w0 = (1 - s) * (1 - s);
+          const w1 = 2 * (1 - s) * s;
+          const w2 = s * s;
+          const o = i * 4;
+          bc.center[o] = w0 * ox + w1 * cX + w2 * eX;
+          bc.center[o + 1] = w0 * oy + w1 * cY + w2 * eY;
+          bc.center[o + 2] = w0 * oz + w1 * cZ + w2 * eZ;
+          bc.center[o + 3] = active ? 1 : 0;
         }
-        if (point.percentage !== void 0) start = i;
+        ((bc.core.halfWidth = cfg.thickness * w), (bc.glow.halfWidth = cfg.thickness * w * 3));
+        for (const l of [bc.core, bc.glow]) {
+          const arr = l.geometry.geometry.getAttribute('color');
+          const fa = arr.array;
+          for (let i = 0; i < branchSegments; i++) {
+            const bv = active ? 1 : 0;
+            const vi = i * 6;
+            fa[vi] = bv;
+            fa[vi + 1] = bv;
+            fa[vi + 2] = bv;
+            fa[vi + 3] = bv;
+            fa[vi + 4] = bv;
+            fa[vi + 5] = bv;
+          }
+          arr.needsUpdate = true;
+        }
       }
-      const n = stop - start;
-      const calculatedPercentage =
-        (percentage - (bezierPoints[start].percentage ?? 0)) /
-        ((bezierPoints[stop].percentage ?? 1) - (bezierPoints[start].percentage ?? 0));
-      let value = 0;
-      for (let i = 0; i <= n; i++) {
-        const p = bezierPoints[start + i];
-        const c =
-          nCr(n, i) * Math.pow(1 - calculatedPercentage, n - i) * Math.pow(calculatedPercentage, i);
-        value += c * p.y;
+    }
+    for (const l of layers) {
+      const arr = l.geometry.geometry.getAttribute('color');
+      const fa = arr.array;
+      for (let i = 0; i < seg; i++) {
+        const bv = center[i * 4 + 3];
+        const vi = i * 6;
+        fa[vi] = bv;
+        fa[vi + 1] = bv;
+        fa[vi + 2] = bv;
+        fa[vi + 3] = bv;
+        fa[vi + 4] = bv;
+        fa[vi + 5] = bv;
       }
-      return value;
+      arr.needsUpdate = true;
+    }
+    if (contacts) {
+      updateContactSprites(
+        contacts.start,
+        contacts.end,
+        sx,
+        sy,
+        sz,
+        ex,
+        ey,
+        ez,
+        flicker,
+        contacts.baseScale
+      );
+    }
+    return flicker;
+  };
+  const hook = (layer, src, n, w) => {
+    const posAttr = layer.geometry.geometry.getAttribute('position');
+    const out = layer.geometry.positionArray;
+    layer.mesh.onBeforeRender = (_r, _s, camera) => {
+      const e = camera.matrixWorld.elements;
+      _camRight.set(e[0], e[1], e[2]);
+      const camX = e[12],
+        camY = e[13],
+        camZ = e[14];
+      for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        const cx = src[o],
+          cy = src[o + 1],
+          cz = src[o + 2];
+        const pi = i > 0 ? (i - 1) * 4 : o;
+        const ni = i < n - 1 ? (i + 1) * 4 : o;
+        _prev.set(src[pi], src[pi + 1], src[pi + 2]);
+        _next.set(src[ni], src[ni + 1], src[ni + 2]);
+        _tangent.subVectors(_next, _prev);
+        const tl = _tangent.length();
+        if (tl < 1e-4) {
+          _tangent.set(0, 1, 0);
+        } else {
+          _tangent.multiplyScalar(1 / tl);
+        }
+        const vx = camX - cx,
+          vy = camY - cy,
+          vz = camZ - cz;
+        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+        const ux = vx / vl,
+          uy = vy / vl,
+          uz = vz / vl;
+        const tx = _tangent.x,
+          ty = _tangent.y,
+          tz = _tangent.z;
+        let px = ty * uz - tz * uy;
+        let py = tz * ux - tx * uz;
+        let pz = tx * uy - ty * ux;
+        const pl = Math.sqrt(px * px + py * py + pz * pz);
+        if (pl < 1e-4) {
+          const cr = _camRight;
+          const d = cr.x * tx + cr.y * ty + cr.z * tz;
+          px = cr.x - tx * d;
+          py = cr.y - ty * d;
+          pz = cr.z - tz * d;
+          const fl = Math.sqrt(px * px + py * py + pz * pz) || 1;
+          px /= fl;
+          py /= fl;
+          pz /= fl;
+        } else if (pl < 0.7) {
+          const w2 = pl / 0.7;
+          const nx = px / pl,
+            ny = py / pl,
+            nz = pz / pl;
+          const cr = _camRight;
+          const d = cr.x * tx + cr.y * ty + cr.z * tz;
+          let fx = cr.x - tx * d;
+          let fy = cr.y - ty * d;
+          let fz = cr.z - tz * d;
+          const fl = Math.sqrt(fx * fx + fy * fy + fz * fz) || 1;
+          fx /= fl;
+          fy /= fl;
+          fz /= fl;
+          px = nx + (fx - nx) * (1 - w2);
+          py = ny + (fy - ny) * (1 - w2);
+          pz = nz + (fz - nz) * (1 - w2);
+          const nl = Math.sqrt(px * px + py * py + pz * pz) || 1;
+          px /= nl;
+          py /= nl;
+          pz /= nl;
+        } else {
+          px /= pl;
+          py /= pl;
+          pz /= pl;
+        }
+        const hw = w ? layer.halfWidth * w[i] : layer.halfWidth;
+        const oL = i * 6;
+        const oR = oL + 3;
+        out[oL] = cx - px * hw;
+        out[oL + 1] = cy - py * hw;
+        out[oL + 2] = cz - pz * hw;
+        out[oR] = cx + px * hw;
+        out[oR + 1] = cy + py * hw;
+        out[oR + 2] = cz + pz * hw;
+      }
+      posAttr.needsUpdate = true;
+    };
+  };
+  const refreshHooks = () => {
+    layers.forEach((l) => hook(l, center, seg, widths));
+    for (const b of branches) {
+      hook(b.core, b.center, branchSegments, b.w);
+      hook(b.glow, b.center, branchSegments, b.w);
+    }
+  };
+  refreshHooks();
+  const updateLive = (patch) => {
+    const cc = new THREE4.Color(cfg.coreColor).multiplyScalar(cfg.intensity);
+    layers[0].material.color.copy(cc);
+    layers[1].material.color
+      .copy(new THREE4.Color(cfg.color))
+      .multiplyScalar(cfg.glow.intensity * 0.8);
+    layers[2].material.color
+      .copy(new THREE4.Color(cfg.color))
+      .multiplyScalar(cfg.glow.intensity * 0.4);
+    layers[0].halfWidth = cfg.thickness * 0.5;
+    layers[1].halfWidth = cfg.thickness * 0.5 * 2;
+    layers[2].halfWidth = cfg.thickness * 0.5 * Math.max(2, cfg.glow.width);
+    if (cfg.glow.profile !== lastProfile && patch?.glow?.profile !== void 0) {
+      lastProfile = cfg.glow.profile;
+      writeProfileTexture(coreMap, PROFILE_SIZE, 700, lastProfile);
+      writeProfileTexture(innerMap, PROFILE_SIZE, 70, lastProfile);
+      writeProfileTexture(haloMap, PROFILE_SIZE, 8, lastProfile);
+    }
+    if (contacts) {
+      const col = new THREE4.Color(cfg.color);
+      for (const m of contacts.materials) {
+        m.color.setRGB(
+          col.r * cfg.contact.intensity,
+          col.g * cfg.contact.intensity,
+          col.b * cfg.contact.intensity
+        );
+      }
+      contacts.baseScale = Math.max(cfg.contact.radius * 2, 0.01);
+    }
+  };
+  let disposed = false;
+  return {
+    root,
+    update: (cycle, start, end) => update(cycle, start, end),
+    updateLive,
+    backend: 'CPU' /* CPU */,
+    computeNode: null,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const l of layerAll) {
+        l.mesh.onBeforeRender = void 0;
+        l.material.dispose();
+        l.geometry.geometry.dispose();
+      }
+      coreMap.dispose();
+      innerMap.dispose();
+      haloMap.dispose();
+      if (contacts) {
+        contacts.materials.forEach((m) => m.dispose());
+      }
+      contactTex.dispose();
     },
   };
-  cache.push(entry);
-  return entry.curveFunction;
+}
+
+// src/js/effects/electric-arc/electric-arc-gpu-registry.ts
+var gpuFactory = null;
+var gpuRenderer = null;
+function registerElectricArcGPUFactory(factory, renderer) {
+  gpuFactory = factory;
+  gpuRenderer = renderer === void 0 ? null : renderer;
+}
+function getElectricArcGPUFactory() {
+  return gpuFactory;
+}
+function getElectricArcGPURenderer() {
+  return gpuRenderer;
+}
+function createArcLighting(cfg) {
+  if (!cfg.lighting.enabled) return null;
+  const color = new THREE4.Color(cfg.color);
+  const makeLight = (intensity) => {
+    const l = new THREE4.PointLight(16777215, intensity, cfg.lighting.distance, cfg.lighting.decay);
+    l.color.copy(color);
+    return l;
+  };
+  const startL = makeLight(cfg.lighting.endpointIntensity);
+  const midL = makeLight(cfg.lighting.midpointIntensity);
+  const endL = makeLight(cfg.lighting.endpointIntensity);
+  const group = new THREE4.Group();
+  group.add(startL, midL, endL);
+  let disposed = false;
+  return {
+    group,
+    lights: [startL, midL, endL],
+    update: (start, end, flicker) => {
+      if (disposed) return;
+      startL.position.copy(start);
+      endL.position.copy(end);
+      midL.position.set((start.x + end.x) * 0.5, (start.y + end.y) * 0.5, (start.z + end.z) * 0.5);
+      const base = Math.max(cfg.intensity, 1e-3);
+      const micro = 0.9 + 0.1 * flicker;
+      startL.intensity = cfg.lighting.endpointIntensity * micro;
+      endL.intensity = cfg.lighting.endpointIntensity * micro;
+      midL.intensity = ((cfg.lighting.midpointIntensity * micro) / (base > 1 ? 1 : 1)) * 1;
+      midL.intensity = cfg.lighting.midpointIntensity * micro;
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      startL.dispose();
+      midL.dispose();
+      endL.dispose();
+    },
+  };
+}
+var _createParticleSystem = null;
+async function resolveParticleSystemFactory() {
+  if (_createParticleSystem) return _createParticleSystem;
+  const mod = await import('./three-particles-I3AJE3KM.js');
+  _createParticleSystem = mod.createParticleSystem;
+  return _createParticleSystem;
+}
+var sparkConfig = (cfg) => {
+  const s = cfg.sparks;
+  return {
+    duration: 0,
+    looping: true,
+    startLifetime: {
+      min: Math.max(0.02, s.lifetime[0]),
+      max: Math.max(0.03, s.lifetime[1]),
+    },
+    startSpeed: { min: s.speed[0], max: s.speed[1] },
+    startSize: { min: s.size[0], max: s.size[1] },
+    startOpacity: 1,
+    startColor: {
+      min: { r: 1, g: 1, b: 0.85 },
+      max: { r: 0.72, g: 1, b: 0.39 },
+    },
+    maxParticles: Math.min(64, Math.max(8, Math.round(s.rate * 0.6))),
+    gravity: 1.5,
+    emission: { rateOverTime: s.rate },
+    shape: { shape: 'SPHERE', sphere: { radius: 0.02, radiusThickness: 1 } },
+    renderer: {
+      blending: THREE4.AdditiveBlending,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+    },
+    opacityOverLifetime: {
+      isActive: true,
+      lifetimeCurve: {
+        type: 'BEZIER',
+        bezierPoints: [
+          { x: 0, y: 1 },
+          { x: 1, y: 0 },
+        ],
+      },
+    },
+  };
 };
-var removeBezierCurveFunction = (particleSystemId) => {
-  while (true) {
-    const index = cache.findIndex((item) => item.referencedBy.includes(particleSystemId));
-    if (index === -1) break;
-    const entry = cache[index];
-    entry.referencedBy = entry.referencedBy.filter((id) => id !== particleSystemId);
-    if (entry.referencedBy.length === 0) cache.splice(index, 1);
+var pushSparkLiveConfig = (systems, cfg) => {
+  const s = cfg.sparks;
+  const patch = {
+    startLifetime: {
+      min: Math.max(0.02, s.lifetime[0]),
+      max: Math.max(0.03, s.lifetime[1]),
+    },
+    startSpeed: { min: s.speed[0], max: s.speed[1] },
+    startSize: { min: s.size[0], max: s.size[1] },
+    maxParticles: Math.min(64, Math.max(8, Math.round(s.rate * 0.6))),
+    emission: { rateOverTime: s.rate },
+  };
+  for (const sys of systems) {
+    try {
+      sys.updateConfig(patch);
+    } catch {}
   }
 };
-var getBezierCacheSize = () => cache.length;
+function createArcSparks(cfg) {
+  if (!cfg.sparks.enabled || cfg.sparks.rate <= 0) return null;
+  const base = sparkConfig(cfg);
+  const group = new THREE4.Group();
+  const systems = [];
+  void resolveParticleSystemFactory().then((factory) => {
+    if (!factory || systems.length > 0) return;
+    try {
+      for (let i = 0; i < 3; i++) systems.push(factory({ ...base }));
+      for (const s of systems) group.add(s.instance);
+    } catch {
+      systems.length = 0;
+    }
+  });
+  const posA = new THREE4.Vector3();
+  const posB = new THREE4.Vector3();
+  const posC = new THREE4.Vector3();
+  let disposed = false;
+  return {
+    group,
+    systems,
+    update: (cycle, start, end) => {
+      if (disposed) return;
+      const mix = mixSeedScalar(cfg.seed, 1, 17) * (1 / 4294967296);
+      const t = 0.3 + mix * 0.4;
+      posC.set(
+        start.x + (end.x - start.x) * t,
+        start.y + (end.y - start.y) * t,
+        start.z + (end.z - start.z) * t
+      );
+      posA.copy(start);
+      posB.copy(end);
+      if (systems.length < 3) return;
+      systems[0].instance.position.copy(posA);
+      systems[1].instance.position.copy(posB);
+      systems[2].instance.position.copy(posC);
+      systems[0].update(cycle);
+      systems[1].update(cycle);
+      systems[2].update(cycle);
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const s of systems) {
+        try {
+          s.dispose();
+        } catch {}
+      }
+    },
+  };
+}
+
+// src/js/effects/electric-arc/electric-arc.ts
+var _zero = new THREE4.Vector3();
+var _tmp = new THREE4.Vector3();
+var resolveEndpoint = (ref, out) => {
+  if (!ref) return;
+  if (ref instanceof THREE4.Object3D) {
+    ref.updateWorldMatrix(true, false);
+    out.setFromMatrixPosition(ref.matrixWorld);
+    return;
+  }
+  const maybe = ref;
+  if (maybe.object instanceof THREE4.Object3D) {
+    maybe.object.updateWorldMatrix(true, false);
+    const { x = 0, y = 0, z = 0 } = maybe.offset ?? _zero;
+    _tmp.set(x, y, z);
+    out.copy(maybe.object.matrixWorld ? _tmp.applyMatrix4(maybe.object.matrixWorld) : out);
+    return;
+  }
+  const p = ref;
+  if (typeof p.x === 'number' || typeof p.y === 'number' || typeof p.z === 'number') {
+    out.set(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+  }
+};
+function createElectricArc(config) {
+  const normalized = normalizeElectricArcConfig(config);
+  const gpuFactory2 = getElectricArcGPUFactory();
+  const gpuRenderer2 = gpuFactory2 ? getElectricArcGPURenderer() : null;
+  const resolved = resolveSimulationBackend(gpuRenderer2 ?? void 0, normalized.simulationBackend);
+  const useGPU = resolved === 'GPU' /* GPU */ && !!gpuFactory2;
+  const instance = new THREE4.Group();
+  instance.name = 'electric-arc';
+  const createBackend = (cfg) => {
+    if (useGPU && gpuFactory2) return gpuFactory2.create(cfg);
+    return createElectricArcCpu(cfg);
+  };
+  let backend = createBackend(normalized);
+  instance.add(backend.root);
+  let lighting = createArcLighting(normalized);
+  let sparks = createArcSparks(normalized);
+  if (lighting) instance.add(lighting.group);
+  if (sparks) instance.add(sparks.group);
+  let startDirect = normalized.start.clone();
+  let endDirect = normalized.end.clone();
+  let binding = null;
+  const scratchStart = new THREE4.Vector3();
+  const scratchEnd = new THREE4.Vector3();
+  const resolveEndpoints = () => {
+    if (binding) {
+      resolveEndpoint(binding.start, scratchStart);
+      resolveEndpoint(binding.end, scratchEnd);
+    } else {
+      scratchStart.copy(startDirect);
+      scratchEnd.copy(endDirect);
+    }
+  };
+  resolveEndpoints();
+  let disposedFlag = false;
+  const rebuild = () => {
+    instance.remove(backend.root);
+    backend.dispose();
+    backend = createBackend(normalized);
+    instance.add(backend.root);
+  };
+  const update = (cycle) => {
+    if (disposedFlag) return;
+    resolveEndpoints();
+    if (normalized.rotationZ) {
+      rotateZ2(scratchStart, normalized.rotationZ);
+      rotateZ2(scratchEnd, normalized.rotationZ);
+    }
+    const flicker = backend.update(cycle, scratchStart, scratchEnd);
+    if (lighting) lighting.update(scratchStart, scratchEnd, flicker);
+    if (sparks) sparks.update(cycle, scratchStart, scratchEnd);
+  };
+  const updateConfig = (patch) => {
+    if (disposedFlag) return;
+    const structural = touchesStructuralField(patch);
+    mergeLiveConfig(normalized, patch);
+    if (structural) {
+      if (lighting) {
+        instance.remove(lighting.group);
+        lighting.dispose();
+        lighting = createArcLighting(normalized);
+        if (lighting) instance.add(lighting.group);
+      }
+      if (sparks) {
+        instance.remove(sparks.group);
+        sparks.dispose();
+        sparks = createArcSparks(normalized);
+        if (sparks) instance.add(sparks.group);
+      }
+      rebuild();
+    } else {
+      backend.updateLive(patch);
+      if (sparks && patch.sparks !== void 0 && sparks.systems.length > 0) {
+        pushSparkLiveConfig(sparks.systems, normalized);
+      }
+    }
+  };
+  return {
+    instance,
+    update,
+    updateConfig,
+    setEndpoints(start, end) {
+      startDirect = toPoint(start);
+      endDirect = toPoint(end);
+    },
+    bindEndpoints(next) {
+      binding = next;
+    },
+    clearEndpointBinding() {
+      binding = null;
+    },
+    get backend() {
+      return backend.backend;
+    },
+    get computeNode() {
+      const arcNode = backend.computeNode;
+      if (sparks && sparks.systems.length > 0) {
+        const nodes = [];
+        if (Array.isArray(arcNode)) nodes.push(...arcNode);
+        else if (arcNode) nodes.push(arcNode);
+        for (const s of sparks.systems) {
+          const sn = s.computeNode;
+          if (Array.isArray(sn)) nodes.push(...sn);
+          else if (sn) nodes.push(sn);
+        }
+        return nodes.length > 0 ? nodes : null;
+      }
+      return arcNode;
+    },
+    dispose() {
+      if (disposedFlag) return;
+      disposedFlag = true;
+      backend.dispose();
+      lighting?.dispose();
+      sparks?.dispose();
+      for (const child of [...instance.children]) instance.remove(child);
+    },
+  };
+}
+var toPoint = (p) => new THREE4.Vector3(p.x ?? 0, p.y ?? 0, p.z ?? 0);
 var CurveFunctionId = /* @__PURE__ */ ((CurveFunctionId3) => {
   CurveFunctionId3['BEZIER'] = 'BEZIER';
   CurveFunctionId3['LINEAR'] = 'LINEAR';
@@ -150,325 +1601,8 @@ var curveFunctionIdMap = {
 };
 var getCurveFunction = (curveFunctionId) =>
   typeof curveFunctionId === 'function' ? curveFunctionId : curveFunctionIdMap[curveFunctionId];
-
-// src/js/effects/three-particles/three-particles-enums.ts
-var SimulationSpace = /* @__PURE__ */ ((SimulationSpace2) => {
-  SimulationSpace2['LOCAL'] = 'LOCAL';
-  SimulationSpace2['WORLD'] = 'WORLD';
-  return SimulationSpace2;
-})(SimulationSpace || {});
-var Shape = /* @__PURE__ */ ((Shape2) => {
-  Shape2['SPHERE'] = 'SPHERE';
-  Shape2['CONE'] = 'CONE';
-  Shape2['BOX'] = 'BOX';
-  Shape2['CIRCLE'] = 'CIRCLE';
-  Shape2['RECTANGLE'] = 'RECTANGLE';
-  return Shape2;
-})(Shape || {});
-var EmitFrom = /* @__PURE__ */ ((EmitFrom2) => {
-  EmitFrom2['VOLUME'] = 'VOLUME';
-  EmitFrom2['SHELL'] = 'SHELL';
-  EmitFrom2['EDGE'] = 'EDGE';
-  return EmitFrom2;
-})(EmitFrom || {});
-var TimeMode = /* @__PURE__ */ ((TimeMode2) => {
-  TimeMode2['LIFETIME'] = 'LIFETIME';
-  TimeMode2['FPS'] = 'FPS';
-  return TimeMode2;
-})(TimeMode || {});
-var LifeTimeCurve = /* @__PURE__ */ ((LifeTimeCurve2) => {
-  LifeTimeCurve2['BEZIER'] = 'BEZIER';
-  LifeTimeCurve2['EASING'] = 'EASING';
-  return LifeTimeCurve2;
-})(LifeTimeCurve || {});
-var SubEmitterTrigger = /* @__PURE__ */ ((SubEmitterTrigger3) => {
-  SubEmitterTrigger3['BIRTH'] = 'BIRTH';
-  SubEmitterTrigger3['DEATH'] = 'DEATH';
-  return SubEmitterTrigger3;
-})(SubEmitterTrigger || {});
-var ForceFieldType = /* @__PURE__ */ ((ForceFieldType3) => {
-  ForceFieldType3['POINT'] = 'POINT';
-  ForceFieldType3['DIRECTIONAL'] = 'DIRECTIONAL';
-  return ForceFieldType3;
-})(ForceFieldType || {});
-var RendererType = /* @__PURE__ */ ((RendererType2) => {
-  RendererType2['POINTS'] = 'POINTS';
-  RendererType2['INSTANCED'] = 'INSTANCED';
-  RendererType2['TRAIL'] = 'TRAIL';
-  RendererType2['MESH'] = 'MESH';
-  return RendererType2;
-})(RendererType || {});
-var ForceFieldFalloff = /* @__PURE__ */ ((ForceFieldFalloff3) => {
-  ForceFieldFalloff3['NONE'] = 'NONE';
-  ForceFieldFalloff3['LINEAR'] = 'LINEAR';
-  ForceFieldFalloff3['QUADRATIC'] = 'QUADRATIC';
-  return ForceFieldFalloff3;
-})(ForceFieldFalloff || {});
-var CollisionPlaneMode = /* @__PURE__ */ ((CollisionPlaneMode3) => {
-  CollisionPlaneMode3['KILL'] = 'KILL';
-  CollisionPlaneMode3['CLAMP'] = 'CLAMP';
-  CollisionPlaneMode3['BOUNCE'] = 'BOUNCE';
-  return CollisionPlaneMode3;
-})(CollisionPlaneMode || {});
-var SimulationBackend = /* @__PURE__ */ ((SimulationBackend2) => {
-  SimulationBackend2['AUTO'] = 'AUTO';
-  SimulationBackend2['CPU'] = 'CPU';
-  SimulationBackend2['GPU'] = 'GPU';
-  return SimulationBackend2;
-})(SimulationBackend || {});
-
-// src/js/effects/three-particles/three-particles-constants.ts
-var SCALAR_STRIDE = 10;
-var S_IS_ACTIVE = 0;
-var S_LIFETIME = 1;
-var S_START_LIFETIME = 2;
-var S_START_FRAME = 3;
-var S_SIZE = 4;
-var S_ROTATION = 5;
-var S_COLOR_R = 6;
-var S_COLOR_G = 7;
-var S_COLOR_B = 8;
-var S_COLOR_A = 9;
-var calculateRandomPositionAndVelocityOnSphere = (
-  position,
-  quaternion,
-  velocity,
-  speed,
-  { radius, radiusThickness, arc }
-) => {
-  const u = Math.random() * (arc / 360);
-  const v = Math.random();
-  const randomizedDistanceRatio = Math.random();
-  const theta = 2 * Math.PI * u;
-  const phi = Math.acos(2 * v - 1);
-  const sinPhi = Math.sin(phi);
-  const xDirection = sinPhi * Math.cos(theta);
-  const yDirection = sinPhi * Math.sin(theta);
-  const zDirection = Math.cos(phi);
-  const normalizedThickness = 1 - radiusThickness;
-  position.x =
-    radius * normalizedThickness * xDirection +
-    radius * radiusThickness * randomizedDistanceRatio * xDirection;
-  position.y =
-    radius * normalizedThickness * yDirection +
-    radius * radiusThickness * randomizedDistanceRatio * yDirection;
-  position.z =
-    radius * normalizedThickness * zDirection +
-    radius * radiusThickness * randomizedDistanceRatio * zDirection;
-  position.applyQuaternion(quaternion);
-  const speedMultiplierByPosition = 1 / position.length();
-  velocity.set(
-    position.x * speedMultiplierByPosition * speed,
-    position.y * speedMultiplierByPosition * speed,
-    position.z * speedMultiplierByPosition * speed
-  );
-  velocity.applyQuaternion(quaternion);
-};
-var calculateRandomPositionAndVelocityOnCone = (
-  position,
-  quaternion,
-  velocity,
-  speed,
-  { radius, radiusThickness, arc, angle = 90 }
-) => {
-  const theta = 2 * Math.PI * Math.random() * (arc / 360);
-  const randomizedDistanceRatio = Math.random();
-  const xDirection = Math.cos(theta);
-  const yDirection = Math.sin(theta);
-  const normalizedThickness = 1 - radiusThickness;
-  position.x =
-    radius * normalizedThickness * xDirection +
-    radius * radiusThickness * randomizedDistanceRatio * xDirection;
-  position.y =
-    radius * normalizedThickness * yDirection +
-    radius * radiusThickness * randomizedDistanceRatio * yDirection;
-  position.z = 0;
-  position.applyQuaternion(quaternion);
-  const positionLength = position.length();
-  const normalizedAngle = Math.abs((positionLength / radius) * THREE3.MathUtils.degToRad(angle));
-  const sinNormalizedAngle = Math.sin(normalizedAngle);
-  const speedMultiplierByPosition = 1 / positionLength;
-  velocity.set(
-    position.x * sinNormalizedAngle * speedMultiplierByPosition * speed,
-    position.y * sinNormalizedAngle * speedMultiplierByPosition * speed,
-    Math.cos(normalizedAngle) * speed
-  );
-  velocity.applyQuaternion(quaternion);
-};
-var calculateRandomPositionAndVelocityOnBox = (
-  position,
-  quaternion,
-  velocity,
-  speed,
-  { scale, emitFrom }
-) => {
-  const _scale = scale;
-  switch (emitFrom) {
-    case 'VOLUME' /* VOLUME */:
-      position.x = Math.random() * _scale.x - _scale.x / 2;
-      position.y = Math.random() * _scale.y - _scale.y / 2;
-      position.z = Math.random() * _scale.z - _scale.z / 2;
-      break;
-    case 'SHELL' /* SHELL */:
-      const side = Math.floor(Math.random() * 6);
-      const perpendicularAxis = side % 3;
-      const shellResult = [];
-      shellResult[perpendicularAxis] = side > 2 ? 1 : 0;
-      shellResult[(perpendicularAxis + 1) % 3] = Math.random();
-      shellResult[(perpendicularAxis + 2) % 3] = Math.random();
-      position.x = shellResult[0] * _scale.x - _scale.x / 2;
-      position.y = shellResult[1] * _scale.y - _scale.y / 2;
-      position.z = shellResult[2] * _scale.z - _scale.z / 2;
-      break;
-    case 'EDGE' /* EDGE */:
-      const side2 = Math.floor(Math.random() * 6);
-      const perpendicularAxis2 = side2 % 3;
-      const edge = Math.floor(Math.random() * 4);
-      const edgeResult = [];
-      edgeResult[perpendicularAxis2] = side2 > 2 ? 1 : 0;
-      edgeResult[(perpendicularAxis2 + 1) % 3] = edge < 2 ? Math.random() : edge - 2;
-      edgeResult[(perpendicularAxis2 + 2) % 3] = edge < 2 ? edge : Math.random();
-      position.x = edgeResult[0] * _scale.x - _scale.x / 2;
-      position.y = edgeResult[1] * _scale.y - _scale.y / 2;
-      position.z = edgeResult[2] * _scale.z - _scale.z / 2;
-      break;
-  }
-  position.applyQuaternion(quaternion);
-  velocity.set(0, 0, speed);
-  velocity.applyQuaternion(quaternion);
-};
-var calculateRandomPositionAndVelocityOnCircle = (
-  position,
-  quaternion,
-  velocity,
-  speed,
-  { radius, radiusThickness, arc }
-) => {
-  const theta = 2 * Math.PI * Math.random() * (arc / 360);
-  const randomizedDistanceRatio = Math.random();
-  const xDirection = Math.cos(theta);
-  const yDirection = Math.sin(theta);
-  const normalizedThickness = 1 - radiusThickness;
-  position.x =
-    radius * normalizedThickness * xDirection +
-    radius * radiusThickness * randomizedDistanceRatio * xDirection;
-  position.y =
-    radius * normalizedThickness * yDirection +
-    radius * radiusThickness * randomizedDistanceRatio * yDirection;
-  position.z = 0;
-  position.applyQuaternion(quaternion);
-  const positionLength = position.length();
-  const speedMultiplierByPosition = 1 / positionLength;
-  velocity.set(
-    position.x * speedMultiplierByPosition * speed,
-    position.y * speedMultiplierByPosition * speed,
-    0
-  );
-  velocity.applyQuaternion(quaternion);
-};
-var calculateRandomPositionAndVelocityOnRectangle = (
-  position,
-  quaternion,
-  velocity,
-  speed,
-  { rotation, scale }
-) => {
-  const _scale = scale;
-  const _rotation = rotation;
-  const xOffset = Math.random() * _scale.x - _scale.x / 2;
-  const yOffset = Math.random() * _scale.y - _scale.y / 2;
-  const rotationX = THREE3.MathUtils.degToRad(_rotation.x);
-  const rotationY = THREE3.MathUtils.degToRad(_rotation.y);
-  position.x = xOffset * Math.cos(rotationY);
-  position.y = yOffset * Math.cos(rotationX);
-  position.z = xOffset * Math.sin(rotationY) - yOffset * Math.sin(rotationX);
-  position.applyQuaternion(quaternion);
-  velocity.set(0, 0, speed);
-  velocity.applyQuaternion(quaternion);
-};
-var createDefaultMeshTexture = () => {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    const context = canvas.getContext('2d');
-    if (context) {
-      context.fillStyle = 'white';
-      context.fillRect(0, 0, 1, 1);
-      const texture = new THREE3.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-      return texture;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
-var createDefaultParticleTexture = () => {
-  try {
-    const canvas = document.createElement('canvas');
-    const size = 64;
-    canvas.width = size;
-    canvas.height = size;
-    const context = canvas.getContext('2d');
-    if (context) {
-      const centerX = size / 2;
-      const centerY = size / 2;
-      const radius = size / 2 - 2;
-      context.beginPath();
-      context.arc(centerX, centerY, radius, 0, 2 * Math.PI, false);
-      context.fillStyle = 'white';
-      context.fill();
-      const texture = new THREE3.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-      return texture;
-    } else {
-      console.warn('Could not get 2D context to generate default particle texture.');
-      return null;
-    }
-  } catch (error) {
-    console.warn('Error creating default particle texture:', error);
-    return null;
-  }
-};
-var isLifeTimeCurve = (value) => {
-  return typeof value !== 'number' && 'type' in value;
-};
-var getCurveFunctionFromConfig = (particleSystemId, lifetimeCurve) => {
-  if (lifetimeCurve.type === 'BEZIER' /* BEZIER */) {
-    return createBezierCurveFunction(particleSystemId, lifetimeCurve.bezierPoints);
-  }
-  if (lifetimeCurve.type === 'EASING' /* EASING */) {
-    return lifetimeCurve.curveFunction;
-  }
-  const raw = lifetimeCurve;
-  if (Array.isArray(raw.bezierPoints)) {
-    return createBezierCurveFunction(particleSystemId, raw.bezierPoints);
-  }
-  if (typeof raw.curveFunction === 'function') {
-    return raw.curveFunction;
-  }
-  throw new Error(`Unsupported value type: ${lifetimeCurve}`);
-};
-var calculateValue = (particleSystemId, value, time = 0) => {
-  if (typeof value === 'number') {
-    return value;
-  }
-  if ('min' in value && 'max' in value) {
-    if (value.min === value.max) {
-      return value.min ?? 0;
-    }
-    return THREE3.MathUtils.randFloat(value.min ?? 0, value.max ?? 1);
-  }
-  const lifetimeCurve = value;
-  return (
-    getCurveFunctionFromConfig(particleSystemId, lifetimeCurve)(time) * (lifetimeCurve.scale ?? 1)
-  );
-};
-
-// src/js/effects/three-particles/three-particles-modifiers.ts
-var noiseInput = new THREE3.Vector3(0, 0, 0);
-var orbitalEuler = new THREE3.Euler();
+var noiseInput = new THREE4.Vector3(0, 0, 0);
+var orbitalEuler = new THREE4.Euler();
 var applyModifiers = ({
   delta,
   generalData,
@@ -616,2417 +1750,6 @@ var applyModifiers = ({
     else attributes.quat.needsUpdate = true;
   }
 };
-
-// src/js/effects/three-particles/three-particles-renderer-detect.ts
-function isComputeCapableRenderer(renderer) {
-  return (
-    renderer !== null &&
-    renderer !== void 0 &&
-    typeof renderer === 'object' &&
-    'compute' in renderer &&
-    typeof renderer.compute === 'function' &&
-    'hasFeature' in renderer &&
-    typeof renderer.hasFeature === 'function'
-  );
-}
-function resolveSimulationBackend(renderer, preference = 'AUTO' /* AUTO */) {
-  const gpuCapable = isComputeCapableRenderer(renderer);
-  if (preference === 'CPU' /* CPU */) {
-    return 'CPU'; /* CPU */
-  }
-  if (preference === 'GPU' /* GPU */) {
-    return gpuCapable ? 'GPU' /* GPU */ : 'CPU'; /* CPU */
-  }
-  return gpuCapable ? 'GPU' /* GPU */ : 'CPU'; /* CPU */
-}
-function resolveWebGPUEffectiveRendererType(requested) {
-  switch (requested) {
-    case 'INSTANCED' /* INSTANCED */:
-      return 'INSTANCED'; /* INSTANCED */
-    case 'TRAIL' /* TRAIL */:
-      return 'TRAIL'; /* TRAIL */
-    case 'MESH' /* MESH */:
-      return 'MESH'; /* MESH */
-    case 'POINTS' /* POINTS */:
-    default:
-      return 'POINTS'; /* POINTS */
-  }
-}
-var _particleSystemId = 0;
-var createdParticleSystems = [];
-var _tslMaterialFactory = null;
-var _rendererBackendIsGPU = true;
-var _cpuPreferenceWarned = false;
-var _cpuPreferencePreferenceWarn = () => {
-  _cpuPreferenceWarned = true;
-  console.warn(
-    "three-particles: simulationBackend 'CPU' maps to the GPU kernel in 4.0.0 (GPU-only build)."
-  );
-};
-var registerTSLMaterialFactory = (factory, options) => {
-  if (options && 'renderer' in options && !isComputeCapableRenderer(options.renderer)) {
-    console.warn(
-      'three-particles: registerTSLMaterialFactory skipped ??? the provided renderer does not support compute dispatches (expected THREE.WebGPURenderer). Particle systems will use the CPU/GLSL path.'
-    );
-    return false;
-  }
-  _tslMaterialFactory = factory;
-  if (options && 'renderer' in options) {
-    _rendererBackendIsGPU = !!options.renderer?.backend?.isWebGPUBackend;
-  } else {
-    _rendererBackendIsGPU = true;
-  }
-  return true;
-};
-new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Euler(0, 0, 0, 'XYZ');
-var _lastWorldPositionSnapshot = new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Quaternion();
-var assertNamed = (cond, message) => {
-  if (!cond) {
-    throw new Error(`three-particles: ${message}`);
-  }
-};
-var normalizeVector2Value = (raw, fallback, label) => {
-  if (raw === void 0 || raw === null) {
-    return new THREE3.Vector2(fallback[0], fallback[1]);
-  }
-  if (raw instanceof THREE3.Vector2) return raw;
-  let n1;
-  let n2;
-  if (Array.isArray(raw)) {
-    n1 = Number(raw[0]);
-    n2 = Number(raw[1]);
-  } else if (typeof raw === 'object') {
-    const o = raw;
-    n1 = o.x !== void 0 ? Number(o.x) : o.u !== void 0 ? Number(o.u) : void 0;
-    n2 = o.y !== void 0 ? Number(o.y) : o.v !== void 0 ? Number(o.v) : void 0;
-  }
-  assertNamed(
-    n1 !== void 0 && n2 !== void 0 && Number.isFinite(n1) && Number.isFinite(n2),
-    `${label} must be one of: Vector2, [x,y], [u,v], {x,y} or {u,v}`
-  );
-  return new THREE3.Vector2(n1, n2);
-};
-var normalizeTextureValue = (raw, label) => {
-  if (raw === void 0 || raw === null) return null;
-  assertNamed(
-    typeof raw === 'object' && 'image' in raw,
-    `${label} must be null or a texture object with .image (got ${String(raw)})`
-  );
-  return raw;
-};
-var normalizeDepthTextureValue = (raw, label) => {
-  if (raw === void 0 || raw === null) return null;
-  assertNamed(
-    typeof raw === 'object' && 'image' in raw,
-    `${label} must be a texture object with .image when set (got ${String(raw)})`
-  );
-  return raw;
-};
-var normalizeBackgroundToVector3 = (raw, label) => {
-  if (raw === void 0 || raw === null) return new THREE3.Vector3(1, 1, 1);
-  if (typeof raw === 'number') {
-    const c = new THREE3.Color(raw);
-    return new THREE3.Vector3(c.r, c.g, c.b);
-  }
-  if (typeof raw === 'string') {
-    const s = raw.trim();
-    const c = new THREE3.Color(s.startsWith('#') ? s : `#${s}`);
-    assertNamed(
-      Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b),
-      `${label} is not a valid hex color string`
-    );
-    return new THREE3.Vector3(c.r, c.g, c.b);
-  }
-  if (Array.isArray(raw)) {
-    const [r, g, b] = raw;
-    assertNamed(
-      Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b),
-      `${label} array must contain three finite numbers`
-    );
-    return new THREE3.Vector3(r, g, b);
-  }
-  const o = raw;
-  assertNamed(
-    Number.isFinite(Number(o.r)) && Number.isFinite(Number(o.g)) && Number.isFinite(Number(o.b)),
-    `${label} object must provide finite r/g/b`
-  );
-  return new THREE3.Vector3(Number(o.r), Number(o.g), Number(o.b));
-};
-new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Vector3();
-new THREE3.Vector2();
-var toVector3 = (v, fallback) =>
-  v ? new THREE3.Vector3(v.x ?? 0, v.y ?? 0, v.z ?? 0) : fallback.clone();
-var normalizeForceFields = (rawForceFields) =>
-  (rawForceFields ?? []).map((ff) => ({
-    isActive: ff.isActive ?? true,
-    type: ff.type ?? 'POINT' /* POINT */,
-    position: toVector3(ff.position, new THREE3.Vector3(0, 0, 0)),
-    direction: toVector3(ff.direction, new THREE3.Vector3(0, 1, 0)).normalize(),
-    strength: ff.strength ?? 1,
-    range: Math.max(0, ff.range ?? Infinity),
-    falloff: ff.falloff ?? 'LINEAR' /* LINEAR */,
-  }));
-var normalizeCollisionPlanes = (rawPlanes) =>
-  (rawPlanes ?? []).map((cp) => ({
-    isActive: cp.isActive ?? true,
-    position: toVector3(cp.position, new THREE3.Vector3(0, 0, 0)),
-    normal: toVector3(cp.normal, new THREE3.Vector3(0, 1, 0)).normalize(),
-    mode: cp.mode ?? 'KILL' /* KILL */,
-    dampen: Math.max(0, Math.min(1, cp.dampen ?? 0.5)),
-    lifetimeLoss: Math.max(0, Math.min(1, cp.lifetimeLoss ?? 0)),
-  }));
-var blendingMap = {
-  'THREE.NoBlending': THREE3.NoBlending,
-  'THREE.NormalBlending': THREE3.NormalBlending,
-  'THREE.AdditiveBlending': THREE3.AdditiveBlending,
-  'THREE.SubtractiveBlending': THREE3.SubtractiveBlending,
-  'THREE.MultiplyBlending': THREE3.MultiplyBlending,
-};
-var toBlendingConstant = (v) => {
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string') {
-    const key = v.startsWith('THREE.') ? v : `THREE.${v}`;
-    const mapped = blendingMap[key];
-    if (mapped !== void 0) return mapped;
-  }
-  return THREE3.NormalBlending;
-};
-var getDefaultParticleSystemConfig = () =>
-  JSON.parse(JSON.stringify(DEFAULT_PARTICLE_SYSTEM_CONFIG));
-var DEFAULT_PARTICLE_SYSTEM_CONFIG = {
-  transform: {
-    position: new THREE3.Vector3(),
-    rotation: new THREE3.Vector3(),
-    scale: new THREE3.Vector3(1, 1, 1),
-  },
-  duration: 5,
-  looping: true,
-  startDelay: 0,
-  startLifetime: 5,
-  startSpeed: 1,
-  startSize: 1,
-  startOpacity: 1,
-  startRotation: 0,
-  startColor: {
-    min: { r: 1, g: 1, b: 1 },
-    max: { r: 1, g: 1, b: 1 },
-  },
-  gravity: 0,
-  simulationSpace: 'LOCAL' /* LOCAL */,
-  simulationBackend: 'AUTO' /* AUTO */,
-  maxParticles: 100,
-  emission: {
-    rateOverTime: 10,
-    rateOverDistance: 0,
-    bursts: [],
-  },
-  shape: {
-    shape: 'SPHERE' /* SPHERE */,
-    sphere: {
-      radius: 1,
-      radiusThickness: 1,
-      arc: 360,
-    },
-    cone: {
-      angle: 25,
-      radius: 1,
-      radiusThickness: 1,
-      arc: 360,
-    },
-    circle: {
-      radius: 1,
-      radiusThickness: 1,
-      arc: 360,
-    },
-    rectangle: {
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: 1, y: 1 },
-    },
-    box: {
-      scale: { x: 1, y: 1, z: 1 },
-      emitFrom: 'VOLUME' /* VOLUME */,
-    },
-  },
-  map: void 0,
-  renderer: {
-    blending: THREE3.NormalBlending,
-    discardBackgroundColor: false,
-    backgroundColorTolerance: 1,
-    backgroundColor: { r: 1, g: 1, b: 1 },
-    transparent: true,
-    depthTest: true,
-    depthWrite: false,
-    softParticles: {
-      enabled: false,
-      intensity: 1,
-    },
-  },
-  velocityOverLifetime: {
-    isActive: false,
-    linear: {
-      x: 0,
-      y: 0,
-      z: 0,
-    },
-    orbital: {
-      x: 0,
-      y: 0,
-      z: 0,
-    },
-  },
-  sizeOverLifetime: {
-    isActive: false,
-    lifetimeCurve: {
-      type: 'BEZIER' /* BEZIER */,
-      scale: 1,
-      bezierPoints: [
-        { x: 0, y: 0, percentage: 0 },
-        { x: 1, y: 1, percentage: 1 },
-      ],
-    },
-  },
-  colorOverLifetime: {
-    isActive: false,
-    r: {
-      type: 'BEZIER' /* BEZIER */,
-      scale: 1,
-      bezierPoints: [
-        { x: 0, y: 1, percentage: 0 },
-        { x: 1, y: 1, percentage: 1 },
-      ],
-    },
-    g: {
-      type: 'BEZIER' /* BEZIER */,
-      scale: 1,
-      bezierPoints: [
-        { x: 0, y: 1, percentage: 0 },
-        { x: 1, y: 1, percentage: 1 },
-      ],
-    },
-    b: {
-      type: 'BEZIER' /* BEZIER */,
-      scale: 1,
-      bezierPoints: [
-        { x: 0, y: 1, percentage: 0 },
-        { x: 1, y: 1, percentage: 1 },
-      ],
-    },
-  },
-  opacityOverLifetime: {
-    isActive: false,
-    lifetimeCurve: {
-      type: 'BEZIER' /* BEZIER */,
-      scale: 1,
-      bezierPoints: [
-        { x: 0, y: 0, percentage: 0 },
-        { x: 1, y: 1, percentage: 1 },
-      ],
-    },
-  },
-  rotationOverLifetime: {
-    isActive: false,
-    min: 0,
-    max: 0,
-  },
-  noise: {
-    isActive: false,
-    useRandomOffset: false,
-    strength: 1,
-    frequency: 0.5,
-    octaves: 1,
-    positionAmount: 1,
-    rotationAmount: 0,
-    sizeAmount: 0,
-  },
-  textureSheetAnimation: {
-    tiles: new THREE3.Vector2(1, 1),
-    timeMode: 'LIFETIME' /* LIFETIME */,
-    fps: 30,
-    startFrame: 0,
-  },
-  forceFields: [],
-  collisionPlanes: [],
-};
-var destroyParticleSystem = (particleSystem) => {
-  createdParticleSystems = createdParticleSystems.filter(
-    ({ particleSystem: savedParticleSystem, trailMesh, generalData: { particleSystemId } }) => {
-      if (savedParticleSystem !== particleSystem) {
-        return true;
-      }
-      removeBezierCurveFunction(particleSystemId);
-      if (trailMesh) {
-        trailMesh.geometry.dispose();
-        if (Array.isArray(trailMesh.material)) trailMesh.material.forEach((m) => m.dispose());
-        else trailMesh.material.dispose();
-        if (trailMesh.parent) trailMesh.parent.remove(trailMesh);
-      }
-      savedParticleSystem.geometry.dispose();
-      if (Array.isArray(savedParticleSystem.material))
-        savedParticleSystem.material.forEach((material) => material.dispose());
-      else savedParticleSystem.material.dispose();
-      if (savedParticleSystem.parent) savedParticleSystem.parent.remove(savedParticleSystem);
-      return false;
-    }
-  );
-};
-var _defaultTexture = null;
-var getDefaultTexture = () => {
-  if (_defaultTexture) return _defaultTexture;
-  if (typeof document === 'undefined') return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = 1;
-  canvas.height = 1;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, 1, 1);
-  }
-  _defaultTexture = new THREE3.Texture(canvas);
-  _defaultTexture.needsUpdate = true;
-  return _defaultTexture;
-};
-var createParticleSystem = (config = DEFAULT_PARTICLE_SYSTEM_CONFIG, externalNow) => {
-  const now = externalNow || Date.now();
-  const useTSL = _tslMaterialFactory !== null;
-  if (!useTSL) {
-    throw new Error(
-      'three-particles: WebGPU TSL material factory not registered. Call enableWebGPU(renderer) immediately after creating a WebGPURenderer. @cyberluke/three-particles 4.0.0 is GPU-only - no CPU fallback path exists.'
-    );
-  }
-  if (!_rendererBackendIsGPU) {
-    throw new Error(
-      'three-particles: renderer is not a native WebGPU backend. This build has no WebGL2 fallback. Use a new THREE.WebGPURenderer().'
-    );
-  }
-  const factory = _tslMaterialFactory;
-  if (!factory.createComputePipeline) {
-    throw new Error(
-      'three-particles: active WebGPU renderer does not provide a complete TSL compute pipeline (createComputePipeline missing). No CPU fallback exists; install a WebGPU-capable backend.'
-    );
-  }
-  const maxParticles = config.maxParticles || DEFAULT_PARTICLE_SYSTEM_CONFIG.maxParticles;
-  const normalizedConfig = ObjectUtils.deepMerge(DEFAULT_PARTICLE_SYSTEM_CONFIG, config, {
-    applyToFirstObject: false,
-    skippedProperties: [],
-  });
-  if (normalizedConfig.simulationBackend === 'CPU') {
-    if (!_cpuPreferenceWarned) {
-      _cpuPreferencePreferenceWarn();
-    }
-    normalizedConfig.simulationBackend = 'GPU'; /* GPU */
-  }
-  const requestedRendererType = normalizedConfig.renderer.rendererType || 'POINTS'; /* POINTS */
-  const effectiveRendererType = resolveWebGPUEffectiveRendererType(requestedRendererType);
-  const rrType = effectiveRendererType;
-  const useInstancing =
-    effectiveRendererType === 'INSTANCED' /* INSTANCED */ ||
-    effectiveRendererType === 'MESH'; /* MESH */
-  const trailConfig = normalizedConfig.renderer.trail;
-  const trailLength = Math.max(2, Math.round(trailConfig?.length ?? 20));
-  const trailHistoryAttribute =
-    rrType === 'TRAIL' /* TRAIL */
-      ? new StorageBufferAttribute(new Float32Array(maxParticles * (trailLength + 1) * 4), 4)
-      : null;
-  const trailDesc = trailHistoryAttribute
-    ? {
-        attribute: trailHistoryAttribute,
-        meta: null,
-        length: trailLength,
-        minVertexDistance: trailConfig?.minVertexDistance ?? 0,
-        maxTime: (trailConfig?.maxTime ?? 0) * 1e3,
-      }
-    : null;
-  const subEmitterConfigs = normalizedConfig.subEmitters ?? [];
-  const fifos = subEmitterConfigs.map((se) => {
-    const capacity = Math.max(1, Math.round(se.maxInstances ?? 32));
-    const f = factory.createSubEmitterFifoAttribute(capacity);
-    f.trigger = se.trigger === 'BIRTH' ? 0 : 1;
-    return f;
-  });
-  const fifoBaseStride = fifos.reduce((m, f) => Math.max(m, f.windowSize), 0);
-  const forceFields = normalizeForceFields(normalizedConfig.forceFields);
-  const collisionPlanes = normalizeCollisionPlanes(normalizedConfig.collisionPlanes);
-  const pipeline = factory.createComputePipeline(
-    maxParticles,
-    useInstancing,
-    normalizedConfig,
-    _particleSystemId,
-    // pre-increment inside generalData below would be off by 1; use the raw next id
-    forceFields.length,
-    collisionPlanes.length,
-    fifos,
-    trailDesc ?? void 0
-  );
-  const ribbonPipeline = trailDesc
-    ? factory.createTrailRibbonUpdate({
-        position: new StorageBufferAttribute(
-          new Float32Array(maxParticles * trailLength * 2 * 4),
-          4
-        ),
-        next: new StorageBufferAttribute(new Float32Array(maxParticles * trailLength * 2 * 4), 4),
-        uvColorA: new StorageBufferAttribute(
-          new Float32Array(maxParticles * trailLength * 2 * 4),
-          4
-        ),
-        colorB: new StorageBufferAttribute(new Float32Array(maxParticles * trailLength * 2 * 4), 4),
-        history: trailDesc.attribute,
-        meta: trailDesc.meta,
-        particleColor: pipeline.buffers.color,
-        curveFns: {
-          width: trailConfig?.widthOverTrail
-            ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.widthOverTrail)
-            : void 0,
-          opacity: trailConfig?.opacityOverTrail
-            ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.opacityOverTrail)
-            : void 0,
-          colorR: trailConfig?.colorOverTrail?.isActive
-            ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.colorOverTrail.r)
-            : void 0,
-          colorG: trailConfig?.colorOverTrail?.isActive
-            ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.colorOverTrail.g)
-            : void 0,
-          colorB: trailConfig?.colorOverTrail?.isActive
-            ? getCurveFunctionFromConfig(_particleSystemId, trailConfig.colorOverTrail.b)
-            : void 0,
-        },
-        width: trailConfig?.width ?? 1,
-        length: trailLength,
-        maxTime: trailDesc.maxTime,
-        maxParticles,
-      })
-    : null;
-  const subEntries = [];
-  for (let fi = 0; fi < subEmitterConfigs.length; fi++) {
-    const se = subEmitterConfigs[fi];
-    const fifo = fifos[fi];
-    const childCfg = ObjectUtils.deepMerge(getDefaultParticleSystemConfig(), se.config ?? {}, {
-      applyToFirstObject: false,
-      skippedProperties: [],
-    });
-    const firstBurst = childCfg.emission?.bursts?.[0];
-    const burstCount = firstBurst
-      ? Math.max(
-          1,
-          Math.ceil(
-            calculateValue(_particleSystemId + 1 + fi, firstBurst.count, 0) *
-              (firstBurst.cycles ?? 1)
-          )
-        )
-      : 1;
-    const perEvent = Math.min(burstCount, fifo.capacity);
-    const childMax = Math.max(2, Math.min(perEvent * fifo.capacity, 65536));
-    const childRequestedRendererType = childCfg.renderer?.rendererType;
-    const childEffectiveRendererType = resolveWebGPUEffectiveRendererType(
-      childRequestedRendererType
-    );
-    const childInstanced =
-      childEffectiveRendererType === 'INSTANCED' /* INSTANCED */ ||
-      childEffectiveRendererType === 'MESH'; /* MESH */
-    const childPipeline = factory.createComputePipeline(
-      childMax,
-      childInstanced,
-      childCfg,
-      _particleSystemId + 1 + fi,
-      0,
-      0,
-      [],
-      void 0
-    );
-    const childShapeParams = factory.encodeShapeEmitParams(childCfg, _particleSystemId + 1 + fi);
-    const childVel = childCfg.velocityOverLifetime;
-    const init = factory.createSubEmitterInitUpdate(
-      childPipeline.buffers,
-      childMax,
-      childShapeParams,
-      pipeline.buffers,
-      maxParticles,
-      fifo,
-      se.inheritVelocity ?? 0,
-      perEvent,
-      {
-        linear: [childVel?.linear?.x, childVel?.linear?.y, childVel?.linear?.z],
-        orbital: [childVel?.orbital?.x, childVel?.orbital?.y, childVel?.orbital?.z],
-      }
-    );
-    subEntries.push({
-      fifo,
-      pipeline: childPipeline,
-      init,
-      instanced: childInstanced,
-      requestedRendererType: childRequestedRendererType,
-      effectiveRendererType: childEffectiveRendererType,
-      cfg: childCfg,
-      object: null,
-      perEvent,
-      gravity: childCfg.gravity,
-      noise: childCfg.noise?.isActive
-        ? {
-            isActive: true,
-            strength: childCfg.noise.strength,
-            noisePower: 0.15 * childCfg.noise.strength,
-            frequency: childCfg.noise.frequency,
-            positionAmount: childCfg.noise.positionAmount,
-            rotationAmount: childCfg.noise.rotationAmount,
-            sizeAmount: childCfg.noise.sizeAmount,
-            fbmMax: 2 - Math.pow(2, -childCfg.noise.octaves),
-          }
-        : null,
-      rate: childCfg.emission?.rateOverTime
-        ? calculateValue(_particleSystemId + 1 + fi, childCfg.emission.rateOverTime, 0)
-        : 0,
-      acc: 0,
-      lastEmit: 0,
-      poseFrom: 'self',
-      selfPose: {
-        x: 0,
-        y: 0,
-        z: 0,
-        qx: 0,
-        qy: 0,
-        qz: 0,
-        qw: 1,
-        sx: 1,
-        sy: 1,
-        sz: 1,
-        isWorld: childCfg.simulationSpace === 'WORLD' /* WORLD */ ? 1 : 0,
-      },
-    });
-  }
-  const cameraNearFarSource = normalizedConfig.renderer.cameraNearFar;
-  const tilesSource = normalizedConfig.textureSheetAnimation?.tiles;
-  const elapsedUniform = { value: 0 };
-  const sharedUniforms = {
-    elapsed: elapsedUniform,
-    viewportHeight: { value: 720 },
-    cameraNearFar: {
-      value: normalizeVector2Value(cameraNearFarSource, [0.1, 1e3], 'renderer.cameraNearFar'),
-    },
-    useInstancing: { value: useInstancing },
-    softParticlesEnabled: { value: !!normalizedConfig.renderer.softParticles?.enabled },
-    softParticlesIntensity: {
-      value: Math.max(normalizedConfig.renderer.softParticles?.intensity ?? 1, 1e-3),
-    },
-    sceneDepthTexture: {
-      value: normalizeDepthTextureValue(
-        normalizedConfig.renderer.softParticles?.depthTexture,
-        'renderer.softParticles.depthTexture'
-      ),
-    },
-    discardBackgroundColor: { value: !!normalizedConfig.renderer.discardBackgroundColor },
-    backgroundColor: { value: new THREE3.Color(16777215) },
-    backgroundColorTolerance: { value: normalizedConfig.renderer.backgroundColorTolerance ?? 0 },
-    map: {
-      value: normalizeTextureValue(normalizedConfig.map ?? getDefaultTexture(), 'map'),
-    },
-    startLifetime: { value: 0 },
-    startSize: { value: 1 },
-    startRotation: { value: 0 },
-    startOpacity: { value: 1 },
-    startColor: { value: new THREE3.Color(1, 1, 1) },
-    lifetime: { value: 0 },
-    color: { value: new THREE3.Color(1, 1, 1) },
-    // Sprite-sheet animation fields consumed by tsl-shared.createParticleUniforms.
-    fps: { value: normalizedConfig.textureSheetAnimation?.fps || 30 },
-    useFPSForFrameIndex: {
-      value: normalizedConfig.textureSheetAnimation?.timeMode === 'FPS' /* FPS */,
-    },
-    tiles: {
-      // The ONLY normalizer: `tiles` reaches the TSL factory as a Vector2
-      // (also {u,v} pairs are accepted per §10). The engine's own default is
-      // already (1,1) via the merged default config.
-      value: normalizeVector2Value(tilesSource, [1, 1], 'textureSheetAnimation.tiles'),
-    },
-  };
-  const bgVec = normalizeBackgroundToVector3(
-    normalizedConfig.renderer.backgroundColor,
-    'renderer.backgroundColor'
-  );
-  sharedUniforms.backgroundColor.value.setRGB(bgVec.x, bgVec.y, bgVec.z);
-  const rendererConfig = {
-    transparent: !!normalizedConfig.renderer.transparent,
-    blending: toBlendingConstant(normalizedConfig.renderer.blending),
-    depthTest: normalizedConfig.renderer.depthTest !== false,
-    depthWrite: normalizedConfig.renderer.depthWrite !== false,
-  };
-  const material = factory.createTSLParticleMaterial(rrType, sharedUniforms, rendererConfig, true);
-  const buffers = pipeline.buffers;
-  let geometry;
-  if (useInstancing) {
-    const g = new THREE3.InstancedBufferGeometry();
-    const meshGeometry = normalizedConfig.renderer.mesh?.geometry;
-    const baseGeometry =
-      rrType === 'MESH' /* MESH */ && meshGeometry ? meshGeometry : new THREE3.BufferGeometry();
-    if (rrType !== 'MESH' /* MESH */ || !meshGeometry) {
-      const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
-      const quadUV = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-      const quadNormal = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
-      const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
-      baseGeometry.setAttribute('position', new THREE3.BufferAttribute(quad, 3));
-      baseGeometry.setAttribute('uv', new THREE3.BufferAttribute(quadUV, 2));
-      baseGeometry.setAttribute('normal', new THREE3.BufferAttribute(quadNormal, 3));
-      baseGeometry.setIndex(new THREE3.BufferAttribute(idx, 1));
-    }
-    g.setAttribute('position', baseGeometry.getAttribute('position'));
-    if (baseGeometry.index !== null) g.setIndex(baseGeometry.index);
-    g.instanceCount = maxParticles;
-    g.setAttribute('instanceOffset', buffers.position);
-    g.setAttribute('instanceColor', buffers.color);
-    g.setAttribute('instanceParticleState', buffers.particleState);
-    g.setAttribute('instanceStartValues', buffers.startValues);
-    geometry = g;
-  } else {
-    const g = new THREE3.BufferGeometry();
-    g.setAttribute('position', buffers.position);
-    g.setAttribute('color', buffers.color);
-    g.setAttribute('particleState', buffers.particleState);
-    g.setAttribute('startValues', buffers.startValues);
-    g.setDrawRange(0, maxParticles);
-    geometry = g;
-    g.instanceCount = maxParticles;
-  }
-  let trailGeometry = null;
-  if (ribbonPipeline && trailDesc) {
-    const rb = ribbonPipeline.buffers;
-    const g = new THREE3.BufferGeometry();
-    g.setAttribute('position', rb.position);
-    g.setAttribute('trailNext', rb.next);
-    g.setAttribute('trailUVColor', rb.uvColorA);
-    g.setAttribute('trailColorBA', rb.colorB);
-    const idx = new Uint32Array(maxParticles * (trailLength - 1) * 6);
-    let o = 0;
-    for (let pIdx = 0; pIdx < maxParticles; pIdx++) {
-      for (let s = 0; s < trailLength - 1; s++) {
-        const b = pIdx * trailLength * 2 + s * 2;
-        idx[o++] = b;
-        idx[o++] = b + 1;
-        idx[o++] = b + 2;
-        idx[o++] = b + 1;
-        idx[o++] = b + 3;
-        idx[o++] = b + 2;
-      }
-    }
-    g.setIndex(new THREE3.BufferAttribute(idx, 1));
-    g.setDrawRange(0, maxParticles * trailLength * 2);
-    trailGeometry = g;
-  }
-  const trailMaterial = trailGeometry
-    ? factory.createTSLTrailMaterial(
-        {
-          map: { value: normalizedConfig.map ?? getDefaultTexture() },
-          useMap: { value: !!normalizedConfig.map },
-          discardBackgroundColor: { value: !!normalizedConfig.renderer.discardBackgroundColor },
-          backgroundColor: {
-            value: normalizedConfig.renderer.backgroundColor ?? { r: 1, g: 1, b: 1 },
-          },
-          backgroundColorTolerance: {
-            value: normalizedConfig.renderer.backgroundColorTolerance ?? 0,
-          },
-          softParticlesEnabled: { value: !!normalizedConfig.renderer.softParticles?.enabled },
-          softParticlesIntensity: {
-            value: Math.max(normalizedConfig.renderer.softParticles?.intensity ?? 1, 1e-3),
-          },
-          sceneDepthTexture: {
-            value: normalizedConfig.renderer.softParticles?.depthTexture ?? null,
-          },
-          cameraNearFar: { value: new THREE3.Vector2(0.1, 1e3) },
-        },
-        {
-          transparent: !!normalizedConfig.renderer.transparent,
-          blending: toBlendingConstant(normalizedConfig.renderer.blending),
-          depthTest: normalizedConfig.renderer.depthTest !== false,
-          depthWrite: normalizedConfig.renderer.depthWrite !== false,
-        }
-      )
-    : null;
-  const particleSystem = trailGeometry
-    ? new THREE3.Mesh(trailGeometry, trailMaterial)
-    : useInstancing
-      ? new THREE3.Mesh(geometry, material)
-      : new THREE3.Points(geometry, material);
-  particleSystem.frustumCulled = false;
-  for (const e of subEntries) {
-    const cb = e.pipeline.buffers;
-    const childMax = e.pipeline.allocatorCount - 1;
-    const childGeometry = e.instanced
-      ? (() => {
-          const g = new THREE3.InstancedBufferGeometry();
-          const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
-          const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
-          g.setAttribute('position', new THREE3.BufferAttribute(quad, 3));
-          g.setIndex(new THREE3.BufferAttribute(idx, 1));
-          g.instanceCount = childMax;
-          g.setAttribute('instanceOffset', cb.position);
-          g.setAttribute('instanceColor', cb.color);
-          g.setAttribute('instanceParticleState', cb.particleState);
-          g.setAttribute('instanceStartValues', cb.startValues);
-          return g;
-        })()
-      : (() => {
-          const g = new THREE3.BufferGeometry();
-          g.setAttribute('position', cb.position);
-          g.setAttribute('color', cb.color);
-          g.setAttribute('particleState', cb.particleState);
-          g.setAttribute('startValues', cb.startValues);
-          g.setDrawRange(0, childMax);
-          return g;
-        })();
-    const childUniforms = {
-      ...sharedUniforms,
-      useInstancing: { value: e.instanced },
-    };
-    const childMaterial = factory.createTSLParticleMaterial(
-      e.effectiveRendererType,
-      childUniforms,
-      rendererConfig,
-      true
-    );
-    const childObject = e.instanced
-      ? new THREE3.Mesh(childGeometry, childMaterial)
-      : new THREE3.Points(childGeometry, childMaterial);
-    childObject.frustumCulled = false;
-    particleSystem.add(childObject);
-    e.object = childObject;
-  }
-  if (import.meta.env?.DEV !== false) {
-    const required = useInstancing
-      ? [
-          'position',
-          // quad / mesh vertex positions
-          'instanceOffset',
-          // GPU particle position
-          'instanceColor',
-          // GPU particle RGBA
-          'instanceParticleState',
-          // GPU packed state vec4
-          'instanceStartValues',
-          // GPU packed initial-state vec4
-        ]
-      : ['position', 'color', 'particleState', 'startValues'];
-    for (const name of required) {
-      if (!geometry.getAttribute(name)) {
-        throw new Error(
-          'three-particles: ' +
-            (useInstancing ? 'instanced' : 'POINTS') +
-            ' geometry ' +
-            name +
-            ' is missing its required contract attribute.'
-        );
-      }
-    }
-    const contractIdentity = useInstancing
-      ? [
-          ['instanceOffset', buffers.position],
-          ['instanceColor', buffers.color],
-          ['instanceParticleState', buffers.particleState],
-          ['instanceStartValues', buffers.startValues],
-        ]
-      : [
-          ['position', buffers.position],
-          ['color', buffers.color],
-          ['particleState', buffers.particleState],
-          ['startValues', buffers.startValues],
-        ];
-    for (const [name, buf] of contractIdentity) {
-      if (geometry.getAttribute(name) !== buf) {
-        throw new Error(
-          `three-particles: attribute "${name}" is not the compute-owned storage buffer.`
-        );
-      }
-    }
-    const kind = pipeline.shapeUniforms.shapeKind.value;
-    if (!(kind >= 0 && kind <= 4)) {
-      throw new Error(`three-particles: gpuShapeKind ${kind} outside 0..4 (SPHERE..BOX).`);
-    }
-    if (!(maxParticles > 0)) {
-      throw new Error('three-particles: maxParticles must be > 0.');
-    }
-    if (pipeline.allocatorCount !== maxParticles + 1) {
-      throw new Error('three-particles: allocator capacity must equal maxParticles + 1.');
-    }
-    const passLayouts = [
-      ...(pipeline.passLayouts ?? []),
-      ...(ribbonPipeline?.passLayouts ?? []),
-      ...subEntries.flatMap((e) => [
-        ...(e.init.passLayouts ?? []),
-        ...(e.pipeline.passLayouts ?? []).map((p) => ({ ...p, name: `child:${p.name}` })),
-      ]),
-    ];
-    for (const pass of passLayouts) {
-      if (pass.storageBindings > 8) {
-        throw new Error(
-          `${pass.name}: ${pass.storageBindings} storage buffers > guaranteed limit 8`
-        );
-      }
-    }
-    if (trailDesc && trailDesc.meta !== pipeline.trailMeta) {
-      throw new Error('three-particles: trail ring meta buffer mismatch.');
-    }
-    for (const f of fifos) {
-      const n = f.counter.array.length;
-      if (n !== 2) {
-        throw new Error(
-          'three-particles: sub-emitter FIFO must expose exactly 2 ping-pong counter slots.'
-        );
-      }
-      const p = f.payload.array.length;
-      if (p !== 2 * 6 * f.capacity) {
-        throw new Error(
-          'three-particles: sub-emitter FIFO payload length must be 2 * 6 * capacity.'
-        );
-      }
-    }
-  }
-  const _numOr = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
-  const xform = normalizedConfig.transform;
-  if (xform?.position) {
-    particleSystem.position.set(
-      _numOr(xform.position.x, 0),
-      _numOr(xform.position.y, 0),
-      _numOr(xform.position.z, 0)
-    );
-  }
-  if (xform?.rotation) {
-    particleSystem.rotation.set(
-      THREE3.MathUtils.degToRad(_numOr(xform.rotation.x, 0)),
-      THREE3.MathUtils.degToRad(_numOr(xform.rotation.y, 0)),
-      THREE3.MathUtils.degToRad(_numOr(xform.rotation.z, 0))
-    );
-  }
-  if (xform?.scale) {
-    particleSystem.scale.set(
-      _numOr(xform.scale.x, 1),
-      _numOr(xform.scale.y, 1),
-      _numOr(xform.scale.z, 1)
-    );
-  }
-  particleSystem.updateMatrix();
-  particleSystem.updateMatrixWorld(true);
-  if (normalizedConfig.simulationSpace === 'WORLD' /* WORLD */) {
-    particleSystem.matrixWorldAutoUpdate = false;
-    particleSystem.matrixWorld.identity();
-  }
-  const generalData = {
-    particleSystemId: _particleSystemId++,
-    normalizedLifetimePercentage: 0,
-    distanceFromLastEmitByDistance: 0,
-    lastWorldPosition: new THREE3.Vector3(-99999),
-    currentWorldPosition: new THREE3.Vector3(-99999),
-    worldPositionChange: new THREE3.Vector3(),
-    sourceWorldMatrix: new THREE3.Matrix4(),
-    worldQuaternion: new THREE3.Quaternion(),
-    wrapperQuaternion: new THREE3.Quaternion(),
-    worldScale: new THREE3.Vector3(1, 1, 1),
-    worldEuler: new THREE3.Euler(),
-    gravityVelocity: new THREE3.Vector3(0, 0, 0),
-    startValues: {},
-    linearVelocityData: void 0,
-    orbitalVelocityData: void 0,
-    lifetimeValues: {},
-    creationTimes: new Float32Array(0),
-    cpuDirtyParticleWatermark: -1,
-    highWaterIndex: 0,
-    noise: {
-      isActive: normalizedConfig.noise.isActive,
-      strength: normalizedConfig.noise.strength,
-      // Oracle `0.15 * strength`; the single fbmMax division lives inside the
-      // FBM sum (CPU: FBM.get3; GPU: the octave loop amp / fbmMax).
-      noisePower: 0.15 * normalizedConfig.noise.strength,
-      frequency: normalizedConfig.noise.frequency,
-      positionAmount: normalizedConfig.noise.positionAmount,
-      rotationAmount: normalizedConfig.noise.rotationAmount,
-      sizeAmount: normalizedConfig.noise.sizeAmount,
-      fbmMax: 2 - Math.pow(2, -normalizedConfig.noise.octaves),
-    },
-    isEnabled: true,
-    burstStates: normalizedConfig.emission.bursts?.length
-      ? normalizedConfig.emission.bursts.map(() => ({
-          cyclesExecuted: 0,
-          lastCycleTime: 0,
-          probabilityPassed: false,
-        }))
-      : void 0,
-  };
-  const props = {
-    particleSystem,
-    mappedAttributes: {
-      position: buffers.position,
-      isActive: buffers.orbitalIsActive,
-      lifetime: buffers.particleState,
-      startLifetime: buffers.startValues,
-      startFrame: buffers.particleState,
-      size: buffers.particleState,
-      rotation: buffers.particleState,
-      color: buffers.color,
-    },
-    // ?? Deprecated zero-size sentinels (GPU-only v4) ????
-    // These legacy CPU particle-state fields are not authoritative anymore: the
-    // compute kernels own the state in GPU storage. Only the TRAIL path (which
-    // throws in v4) consumed them, so they are 0-length placeholders.
-    scalarArray: new Float32Array(0),
-    scalarInterleavedBuffer: new THREE3.InterleavedBuffer(new Float32Array(0), SCALAR_STRIDE),
-    elapsedUniform,
-    generalData,
-    onUpdate: () => {},
-    onComplete: () => {},
-    creationTime: now + (normalizedConfig.startDelay || 0),
-    lastEmissionTime: now,
-    emissionAccumulator: 0,
-    duration: normalizedConfig.duration,
-    looping: normalizedConfig.looping,
-    simulationSpace: normalizedConfig.simulationSpace,
-    gravity: normalizedConfig.gravity,
-    normalizedForceFields: forceFields,
-    normalizedCollisionPlanes: collisionPlanes,
-    emission: normalizedConfig.emission,
-    normalizedConfig,
-    iterationCount: 0,
-    velocities: [],
-    freeList: [],
-    deactivateParticle: () => {},
-    killParticle: () => {},
-    activateParticle: () => {},
-    computePipeline: pipeline,
-    useGPUCompute: true,
-    computeDispatchReady: false,
-    maxParticles,
-    material,
-    geometry,
-    rrType,
-    requestedRendererType,
-    effectiveRendererType: rrType,
-    sharedUniforms,
-    allComputeNodes: [
-      ...(pipeline.computeNodes ?? []),
-      ...(ribbonPipeline ? [ribbonPipeline.ribbonNode] : []),
-      ...subEntries.flatMap((e) => [
-        e.init.commandBuildNode,
-        e.init.childInitNode,
-        ...(e.init.counterClearNode != null ? [e.init.counterClearNode] : []),
-        ...(e.pipeline.computeNodes ?? []),
-      ]),
-    ],
-    passNames: [
-      ...(pipeline.passNames ?? ['emit', 'simulate']),
-      ...(ribbonPipeline ? ['trail-ribbon'] : []),
-      ...subEntries.flatMap((e, ei) => [
-        `sub${ei}:command-build`,
-        `sub${ei}:child-init`,
-        `sub${ei}:counter-clear`,
-        `sub${ei}:child-emit`,
-        `sub${ei}:child-sim`,
-      ]),
-    ],
-    fifoBaseStride,
-    ribbonUniforms: ribbonPipeline ? ribbonPipeline.uniforms : void 0,
-    ribbonBuffers: ribbonPipeline ? ribbonPipeline.buffers : void 0,
-    frameParity: 0,
-    subEntries: subEntries.map((e) => ({
-      fifo: { capacity: e.fifo.capacity, windowSize: e.fifo.windowSize },
-      requestedRendererType: e.requestedRendererType,
-      effectiveRendererType: e.effectiveRendererType,
-      pipeline: e.pipeline,
-      init: e.init,
-      gravity: e.gravity,
-      noise: e.noise,
-      rate: e.rate,
-      acc: 0,
-      isWorld: e.selfPose.isWorld,
-      quat: [e.selfPose.qx, e.selfPose.qy, e.selfPose.qz, e.selfPose.qw],
-      scale: [e.selfPose.sx, e.selfPose.sy, e.selfPose.sz],
-      position: [
-        _numOr(e.cfg.transform?.position?.x, 0),
-        _numOr(e.cfg.transform?.position?.y, 0),
-        _numOr(e.cfg.transform?.position?.z, 0),
-      ],
-    })),
-  };
-  for (const e of subEntries) {
-    if (!e.object) continue;
-    const tf = e.cfg.transform;
-    if (tf?.position) {
-      e.object.position.set(
-        _numOr(tf.position.x, 0),
-        _numOr(tf.position.y, 0),
-        _numOr(tf.position.z, 0)
-      );
-    }
-    if (tf?.rotation) {
-      e.object.rotation.set(
-        THREE3.MathUtils.degToRad(_numOr(tf.rotation.x, 0)),
-        THREE3.MathUtils.degToRad(_numOr(tf.rotation.y, 0)),
-        THREE3.MathUtils.degToRad(_numOr(tf.rotation.z, 0))
-      );
-    }
-    if (tf?.scale) {
-      e.object.scale.set(_numOr(tf.scale.x, 1), _numOr(tf.scale.y, 1), _numOr(tf.scale.z, 1));
-    }
-    e.object.updateMatrix();
-    const q = new THREE3.Quaternion().setFromEuler(
-      new THREE3.Euler(
-        THREE3.MathUtils.degToRad(_numOr(tf?.rotation?.x, 0)),
-        THREE3.MathUtils.degToRad(_numOr(tf?.rotation?.y, 0)),
-        THREE3.MathUtils.degToRad(_numOr(tf?.rotation?.z, 0)),
-        'XYZ'
-      )
-    );
-    const entry = props.subEntries?.[subEntries.indexOf(e)];
-    if (entry) {
-      entry.quat = [q.x, q.y, q.z, q.w];
-      entry.scale = [_numOr(tf?.scale?.x, 1), _numOr(tf?.scale?.y, 1), _numOr(tf?.scale?.z, 1)];
-    }
-  }
-  createdParticleSystems.push(props);
-  const _dbgPassCounts = [
-    ...(pipeline.passLayouts ?? []).map((p) => [p.name, p.storageBindings]),
-    ...(ribbonPipeline?.passLayouts ?? []).map((p) => [p.name, p.storageBindings]),
-    ...subEntries.flatMap((e, ei) => [
-      ...(e.init.passLayouts ?? []).map((p) => [`sub${ei}:${p.name}`, p.storageBindings]),
-      ...(e.pipeline.passLayouts ?? []).map((p) => [`sub${ei}:${p.name}`, p.storageBindings]),
-    ]),
-  ];
-  const _dbgMaxPass = _dbgPassCounts.reduce((m, p) => Math.max(m, p[1]), 0);
-  if (typeof console !== 'undefined' && console.log) {
-    const logCfg = normalizedConfig;
-    const shpU = pipeline.shapeUniforms;
-    const sv = logCfg.startValues;
-    const u = pipeline.uniforms;
-    console.log(`[PS:create] system #${generalData.particleSystemId}`, {
-      rendererType: rrType,
-      requestedRendererType,
-      effectiveRendererType: rrType,
-      simulationSpace: normalizedConfig.simulationSpace,
-      maxParticles,
-      useInstancing,
-    });
-    console.log(`[PS:config] system #${generalData.particleSystemId}`, {
-      shape: {
-        publicKind: logCfg.shape?.shape ?? null,
-        gpuShapeKind: shpU.shapeKind?.value ?? 0,
-        radius: shpU.radius?.value ?? logCfg.shape?.radius ?? null,
-        radiusThickness: shpU.radiusThickness?.value ?? null,
-        arcDeg: shpU.arcDeg?.value ?? null,
-        coneAngleDeg: shpU.coneAngleDeg?.value ?? null,
-        rectScale: [shpU.rectScaleX?.value, shpU.rectScaleY?.value],
-        rectRotationDeg: [shpU.rectRotXDeg?.value, shpU.rectRotYDeg?.value],
-        boxScale: [shpU.boxSX?.value, shpU.boxSY?.value, shpU.boxSZ?.value],
-        boxEmitFrom: shpU.boxEmitFrom?.value ?? null,
-      },
-      transform: {
-        position: xform?.position ?? null,
-        rotation: xform?.rotation ?? null,
-        scale: xform?.scale ?? null,
-      },
-      emission: {
-        rateOverTime: logCfg.emission?.rateOverTime ?? 0,
-        rateOverDistance: logCfg.emission?.rateOverDistance ?? 0,
-        bursts: logCfg.emission?.bursts?.length ?? 0,
-      },
-      startValues: {
-        lifetime: sv?.startLifetime ?? null,
-        speed: sv?.startSpeed ?? null,
-        size: sv?.startSize ?? null,
-        rotation: sv?.startRotation ?? null,
-        color: sv?.startColor ?? null,
-        opacity: sv?.startOpacity ?? null,
-      },
-      textureId: config.textureId ?? config._editorData?.textureId ?? null,
-      textureResolved: !!normalizedConfig.map,
-      forceFieldCount: forceFields.length,
-      collisionPlaneCount: collisionPlanes.length,
-      subEmitterCount: (normalizedConfig.subEmitters ?? []).length,
-      trailEnabled: !!trailDesc,
-      modifiers: {
-        linearVelocity:
-          !!logCfg.velocityOverLifetime?.isActive &&
-          (u.linearVelX !== void 0 ||
-            u.axisLinXMin !== void 0 ||
-            !!(
-              logCfg.velocityOverLifetime?.linear &&
-              Object.values(logCfg.velocityOverLifetime.linear).some(
-                (value) => value !== void 0 && value !== 0
-              )
-            )),
-        orbitalVelocity:
-          !!logCfg.velocityOverLifetime?.isActive &&
-          !!(
-            logCfg.velocityOverLifetime?.orbital &&
-            Object.values(logCfg.velocityOverLifetime.orbital).some(
-              (value) => value !== void 0 && value !== 0
-            )
-          ),
-        sizeOverLifetime: !!normalizedConfig.sizeOverLifetime?.isActive,
-        opacityOverLifetime: !!normalizedConfig.opacityOverLifetime?.isActive,
-        colorOverLifetime: !!normalizedConfig.colorOverLifetime?.isActive,
-        rotationOverLifetime: !!normalizedConfig.rotationOverLifetime?.isActive,
-        noise: !!normalizedConfig.noise?.isActive,
-      },
-    });
-    console.log(
-      `[PS:pipeline] system #${generalData.particleSystemId}: ${(props.passNames ?? []).join(' -> ') || 'emit -> simulate'} | storageBindings=${_dbgPassCounts.map((p) => `${p[0]}=${p[1]}\u22648`).join(' ')} | packedFloats=${pipeline.buffers.packedData?.length ?? 0}`
-    );
-  }
-  const update = (cycleData) => {
-    updateParticleSystemInstance(props, cycleData);
-  };
-  const resumeEmitter = () => {
-    generalData.isEnabled = true;
-  };
-  const pauseEmitter = () => {
-    generalData.isEnabled = false;
-  };
-  const dispose = () => {
-    destroyParticleSystem(particleSystem);
-  };
-  const updateConfig = (partial) => {
-    ObjectUtils.deepMerge(normalizedConfig, partial, {
-      applyToFirstObject: true,
-      skippedProperties: [],
-    });
-  };
-  return {
-    instance: particleSystem,
-    resumeEmitter,
-    pauseEmitter,
-    dispose,
-    update,
-    updateConfig,
-    /**
-     * ?? Deprecated synchronous active count ????
-     * Returns -1 (= unsupported) in the GPU-only engine: the authoritative count
-     * is `maxParticles - allocator[0]` which lives in GPU storage and is only
-     * available through an explicit (throttled) `getArrayBufferAsync` read-back.
-     */
-    getActiveParticleCount: () => -1,
-    computeNode:
-      props.allComputeNodes && props.allComputeNodes.length > 0
-        ? props.allComputeNodes
-        : (pipeline.computeNodes ?? pipeline.computeNode),
-    /**
-         * ?? Temporary one-shot GPU debug handle (deprecated, no per-frame cost) ????
-         * getActiveParticleCount() stays -1; this object is the raw material for an
-         * explicit 
-    enderer.getArrayBufferAsync(...) read-back (bytes, multiples of 4).
-         * lastEmitCount() mirrors uEmitCount, the u32 count written per frame.
-         */
-    gpuDebug: {
-      maxParticles,
-      allocatorCount: pipeline.allocatorCount,
-      /** Canonical requested vs effective GPU renderer classes (§2). */
-      requestedRendererType,
-      effectiveRendererType: rrType,
-      /** u32 birth system seed for this pipeline (written ONCE at create). */
-      systemSeed: pipeline.uniforms.seed.value,
-      buffers: pipeline.buffers,
-      emitNode: pipeline.emitNode,
-      simNode: pipeline.simNode,
-      passNames: pipeline.passNames ?? ['emit', 'simulate'],
-      allPassNames: props.passNames ?? [],
-      storageBindingCount: _dbgMaxPass,
-      passBindingCounts: _dbgPassCounts,
-      lastEmitCount: () => pipeline.uniforms.emitCount.value,
-      /**
-       * Per-sub-emitter-child canonical pairs (§2/§21): each child pool's own
-       * requested vs effective renderer class + its events-per-frame.
-       */
-      subEmitters: (subEntries ?? []).map((e) => ({
-        requestedRendererType: e.requestedRendererType ?? null,
-        effectiveRendererType: e.effectiveRendererType,
-        perEvent: e.perEvent,
-      })),
-      /** Decode summary for the `[PS:config]` / `[PS:pipeline]` logs. */
-      snapshot: () => {
-        const shp = normalizedConfig.shape;
-        const branch =
-          shp.shape === 'CONE' ? shp.cone : shp.shape === 'CIRCLE' ? shp.circle : shp.sphere;
-        const tex = normalizedConfig.map;
-        return {
-          systemId: generalData.particleSystemId,
-          // Canonical effective + original requested renderer classes (§2).
-          effectiveRendererType: rrType,
-          requestedRendererType,
-          rendererType: rrType,
-          simulationSpace: normalizedConfig.simulationSpace,
-          maxParticles,
-          shape: {
-            publicShape: shp.shape,
-            gpuShapeKind: pipeline.shapeUniforms?.shapeKind?.value ?? 0,
-            radius: branch?.radius ?? null,
-            radiusThickness: branch?.radiusThickness ?? null,
-            arcDeg: branch?.arc ?? null,
-            coneAngleDeg: shp.shape === 'CONE' ? (shp.cone?.angle ?? null) : null,
-            rectScale: shp.rectangle?.scale ?? null,
-            rectRotation: shp.rectangle?.rotation ?? null,
-            boxScale: shp.box?.scale ?? null,
-            boxEmitFrom: shp.box?.emitFrom ?? null,
-          },
-          textureId: config.textureId ?? config._editorData?.textureId ?? null,
-          textureResolved: !!normalizedConfig.map,
-          textureDimensions: tex?.image ? [tex.image.width ?? 0, tex.image.height ?? 0] : null,
-          forceFieldCount: (normalizedConfig.forceFields ?? []).length,
-          collisionPlaneCount: (normalizedConfig.collisionPlanes ?? []).length,
-          subEmitterCount: (normalizedConfig.subEmitters ?? []).length,
-          trailEnabled: !!normalizedConfig.renderer.trail,
-        };
-      },
-    },
-  };
-};
-var _lastUploadStampMap = /* @__PURE__ */ new WeakMap();
-var _cmdUploadSeen = /* @__PURE__ */ new WeakSet();
-var updateParticleSystemInstance = (props, { now, delta, elapsed }) => {
-  const {
-    generalData,
-    normalizedConfig,
-    particleSystem,
-    elapsedUniform,
-    creationTime,
-    normalizedForceFields,
-    normalizedCollisionPlanes,
-    emission,
-    computePipeline: pipeline,
-    maxParticles = 0,
-    allComputeNodes,
-    subEntries,
-    fifoBaseStride = 0,
-    ribbonUniforms,
-  } = props;
-  if (!pipeline) return;
-  const u = pipeline.uniforms;
-  const dur = normalizedConfig.duration;
-  const lifetime = now - creationTime;
-  const loop = normalizedConfig.looping;
-  const iterationTimeMs = loop ? lifetime % (dur * 1e3) : lifetime;
-  generalData.normalizedLifetimePercentage = Math.max(Math.min(iterationTimeMs / 1e3 / dur, 1), 0);
-  elapsedUniform.value = elapsed;
-  const gv = generalData.gravityVelocity;
-  gv.set(0, normalizedConfig.gravity, 0);
-  if (normalizedConfig.simulationSpace === 'WORLD' /* WORLD */) {
-    particleSystem.updateMatrix();
-    _tmpM1.copy(particleSystem.matrix);
-    if (particleSystem.parent) {
-      particleSystem.parent.updateMatrixWorld();
-      _tmpM1.premultiply(particleSystem.parent.matrixWorld);
-    }
-    _tmpM1.decompose(
-      generalData.currentWorldPosition,
-      generalData.worldQuaternion,
-      generalData.worldScale
-    );
-  } else {
-    particleSystem.updateMatrixWorld();
-    particleSystem.getWorldPosition(generalData.currentWorldPosition);
-    particleSystem.getWorldQuaternion(generalData.worldQuaternion);
-    particleSystem.getWorldScale(generalData.worldScale);
-    _tmpQ1.copy(generalData.worldQuaternion).invert();
-    gv.applyQuaternion(_tmpQ1);
-    gv.x /= generalData.worldScale.x || 1;
-    gv.y /= generalData.worldScale.y || 1;
-    gv.z /= generalData.worldScale.z || 1;
-  }
-  if (generalData.lastWorldPosition.x !== -99999) {
-    _lastWorldPositionSnapshot.copy(generalData.lastWorldPosition);
-    generalData.distanceFromLastEmitByDistance += _lastWorldPositionSnapshot.distanceTo(
-      generalData.currentWorldPosition
-    );
-  }
-  generalData.lastWorldPosition.copy(generalData.currentWorldPosition);
-  let emitCount = 0;
-  if (generalData.isEnabled && (loop || iterationTimeMs < dur * 1e3)) {
-    const lastEmit = props.lastEmissionTime;
-    const emissionDelta = now - lastEmit;
-    if (emissionDelta > 0) {
-      props.lastEmissionTime = now;
-      if (emission.rateOverTime) {
-        props.emissionAccumulator +=
-          calculateValue(
-            generalData.particleSystemId,
-            emission.rateOverTime,
-            generalData.normalizedLifetimePercentage
-          ) *
-          (emissionDelta / 1e3);
-      }
-    }
-    emitCount += Math.floor(props.emissionAccumulator);
-    if (emitCount > 0) props.emissionAccumulator -= emitCount;
-    if (emission.rateOverDistance && generalData.distanceFromLastEmitByDistance > 0) {
-      const r = calculateValue(
-        generalData.particleSystemId,
-        emission.rateOverDistance,
-        generalData.normalizedLifetimePercentage
-      );
-      if (r > 0) {
-        const n2 = Math.floor(generalData.distanceFromLastEmitByDistance * r);
-        emitCount += n2;
-        generalData.distanceFromLastEmitByDistance = Math.max(
-          generalData.distanceFromLastEmitByDistance - n2 / r,
-          0
-        );
-      }
-    }
-    if (emission.bursts && generalData.burstStates) {
-      const bursts = emission.bursts;
-      const states = generalData.burstStates;
-      const tSec = iterationTimeMs / 1e3;
-      for (let i = 0; i < bursts.length; i++) {
-        const b = bursts[i];
-        const s = states[i];
-        const cyc = b.cycles ?? 1;
-        const iv = b.interval ?? 0;
-        const prob = b.probability ?? 1;
-        if (loop && tSec < (b.time ?? 0) && s.cyclesExecuted > 0) {
-          s.cyclesExecuted = 0;
-          s.lastCycleTime = 0;
-          s.probabilityPassed = false;
-        }
-        if (s.cyclesExecuted >= cyc) continue;
-        const next = (b.time ?? 0) + s.cyclesExecuted * iv;
-        if (tSec >= next) {
-          if (s.cyclesExecuted === 0) s.probabilityPassed = Math.random() < prob;
-          if (s.probabilityPassed) {
-            emitCount += Math.floor(
-              calculateValue(
-                generalData.particleSystemId,
-                b.count,
-                generalData.normalizedLifetimePercentage
-              )
-            );
-          }
-          s.cyclesExecuted++;
-          s.lastCycleTime = tSec;
-        }
-      }
-    }
-    if (emitCount > maxParticles) emitCount = maxParticles;
-  }
-  u.delta.value = delta;
-  u.deltaMs.value = delta * 1e3;
-  u.gravityVelocity.value.copy(gv);
-  u.emitCount.value = emitCount;
-  pipeline.emitNode.count = Math.max(1, emitCount);
-  if (pipeline.subBirthEventsNode) {
-    pipeline.subBirthEventsNode.count = Math.max(1, emitCount);
-  }
-  const n = generalData.noise;
-  if (u.noiseStrength) u.noiseStrength.value = n.strength;
-  if (u.noisePower) u.noisePower.value = n.noisePower;
-  if (u.noiseFrequency) u.noiseFrequency.value = n.frequency;
-  if (u.noisePositionAmount) u.noisePositionAmount.value = n.positionAmount;
-  if (u.noiseRotationAmount) u.noiseRotationAmount.value = n.rotationAmount;
-  if (u.noiseSizeAmount) u.noiseSizeAmount.value = n.sizeAmount;
-  const pose = pipeline.emitterPose;
-  if (pose) {
-    if (normalizedConfig.simulationSpace === 'WORLD' /* WORLD */) {
-      particleSystem.updateMatrix();
-      _tmpM1.copy(particleSystem.matrix);
-      if (particleSystem.parent) {
-        particleSystem.parent.updateMatrixWorld();
-        _tmpM1.premultiply(particleSystem.parent.matrixWorld);
-      }
-      _tmpM1.decompose(_tmpV1, _tmpQ1, _tmpV2);
-      pose.positionW.value.set(_tmpV1.x, _tmpV1.y, _tmpV1.z, 1);
-      pose.wrapperQuat.value.set(_tmpQ1.x, _tmpQ1.y, _tmpQ1.z, _tmpQ1.w);
-      pose.worldScale.value.set(_tmpV2.x || 1, _tmpV2.y || 1, _tmpV2.z || 1);
-    } else {
-      pose.positionW.value.set(0, 0, 0, 0);
-      pose.wrapperQuat.value.set(0, 0, 0, 1);
-      pose.worldScale.value.set(1, 1, 1);
-    }
-  }
-  const parity = (props.frameParity ?? 0) % 2;
-  const fifoBase = parity;
-  if (u.fifoBase) u.fifoBase.value = fifoBase;
-  if (u.nowMs) u.nowMs.value = now;
-  if (ribbonUniforms?.nowMs) ribbonUniforms.nowMs.value = now;
-  for (const e of subEntries ?? []) {
-    const cp = e.pipeline;
-    if (!cp) continue;
-    const cu = cp.uniforms;
-    if (cu.delta) cu.delta.value = delta;
-    if (cu.deltaMs) cu.deltaMs.value = delta * 1e3;
-    if (cu.nowMs) cu.nowMs.value = now;
-    if (cu.gravityVelocity) {
-      cu.gravityVelocity.value.set(0, e.gravity, 0);
-    }
-    if (e.noise) {
-      if (cu.noiseStrength) cu.noiseStrength.value = e.noise.strength;
-      if (cu.noisePower) cu.noisePower.value = e.noise.noisePower;
-      if (cu.noiseFrequency) cu.noiseFrequency.value = e.noise.frequency;
-      if (cu.noisePositionAmount) cu.noisePositionAmount.value = e.noise.positionAmount;
-      if (cu.noiseRotationAmount) cu.noiseRotationAmount.value = e.noise.rotationAmount;
-      if (cu.noiseSizeAmount) cu.noiseSizeAmount.value = e.noise.sizeAmount;
-    }
-    if (cu.fifoBase) cu.fifoBase.value = fifoBase;
-    if (e.init.uniforms.fifoBase) e.init.uniforms.fifoBase.value = fifoBase;
-    let childEmit = 0;
-    if (e.rate > 0) {
-      e.acc += (e.rate * delta) / 1;
-      childEmit = Math.floor(e.acc);
-      if (childEmit > 0) e.acc -= childEmit;
-    }
-    const childCapacity = Math.max(2, (cp.allocatorCount ?? 2) - 1);
-    if (childEmit > childCapacity) childEmit = childCapacity;
-    if (cp.emitNode) cp.emitNode.count = Math.max(1, childEmit);
-    if (cu.emitCount) cu.emitCount.value = childEmit;
-    const cpose = cp.emitterPose;
-    if (cpose) {
-      if (e.isWorld === 1) {
-        cpose.positionW.value.set(e.position[0], e.position[1], e.position[2], 1);
-        cpose.wrapperQuat.value.set(e.quat[0], e.quat[1], e.quat[2], e.quat[3]);
-        cpose.worldScale.value.set(e.scale[0], e.scale[1], e.scale[2]);
-      } else {
-        cpose.positionW.value.set(0, 0, 0, 0);
-        cpose.wrapperQuat.value.set(0, 0, 0, 1);
-        cpose.worldScale.value.set(1, 1, 1);
-      }
-    }
-    const ip = e.init.uniforms;
-    if (ip.positionW && ip.wrapperQuat) {
-      if (e.isWorld === 1) {
-        ip.positionW.value.set(e.position[0], e.position[1], e.position[2], 1);
-        ip.wrapperQuat.value.set(e.quat[0], e.quat[1], e.quat[2], e.quat[3]);
-      } else {
-        ip.positionW.value.set(0, 0, 0, 0);
-        ip.wrapperQuat.value.set(0, 0, 0, 1);
-      }
-    }
-  }
-  const ffInfo = pipeline.forceFieldInfo;
-  const cInfo = pipeline.collisionPlaneInfo ?? null;
-  if ((ffInfo || cInfo) && _tslMaterialFactory) {
-    const cdArr = pipeline.buffers.packedData;
-    const cdNode = pipeline.packedDataNode;
-    if (ffInfo && normalizedForceFields.length > 0) {
-      const encFF = _tslMaterialFactory.encodeForceFieldsForGPU(
-        normalizedForceFields,
-        generalData.particleSystemId,
-        generalData.normalizedLifetimePercentage
-      );
-      let changedFF = false;
-      for (let k = 0; k < encFF.length; k++)
-        if (cdArr[ffInfo.offset + k] !== encFF[k]) {
-          changedFF = true;
-          break;
-        }
-      if (changedFF) {
-        cdArr.set(encFF, ffInfo.offset);
-        cdNode.addUpdateRange(ffInfo.offset, encFF.length);
-        cdNode.needsUpdate = true;
-      }
-      ffInfo.countUniform.value = normalizedForceFields.length;
-    }
-    if (cInfo && normalizedCollisionPlanes.length > 0) {
-      const encCP = _tslMaterialFactory.encodeCollisionPlanesForGPU(normalizedCollisionPlanes);
-      let changedCP = false;
-      for (let k = 0; k < encCP.length; k++)
-        if (cdArr[cInfo.offset + k] !== encCP[k]) {
-          changedCP = true;
-          break;
-        }
-      if (changedCP) {
-        cdArr.set(encCP, cInfo.offset);
-        cdNode.addUpdateRange(cInfo.offset, encCP.length);
-        cdNode.needsUpdate = true;
-      }
-      cInfo.countUniform.value = normalizedCollisionPlanes.length;
-    }
-  }
-  const bufs = pipeline.buffers;
-  let stamp = _lastUploadStampMap.get(bufs);
-  if (stamp === void 0 || stamp === 0) {
-    for (const key of Object.keys(bufs)) {
-      const a = bufs[key];
-      if (a && 'needsUpdate' in a) a.needsUpdate = true;
-    }
-    _lastUploadStampMap.set(bufs, 1);
-  } else {
-    _lastUploadStampMap.set(bufs, stamp + 1);
-  }
-  for (const e of subEntries ?? []) {
-    const cb = e.pipeline?.buffers;
-    if (cb && !_lastUploadStampMap.has(cb)) {
-      for (const key of Object.keys(cb)) {
-        const a = cb[key];
-        if (a && 'needsUpdate' in a) a.needsUpdate = true;
-      }
-      _lastUploadStampMap.set(cb, 1);
-    }
-    const cmd = e.init.commandBuffer;
-    if (cmd && 'needsUpdate' in cmd && !_cmdUploadSeen.has(cmd)) {
-      cmd.needsUpdate = true;
-      _cmdUploadSeen.add(cmd);
-    }
-  }
-  const rb = props.ribbonBuffers;
-  if (rb && !_lastUploadStampMap.has(rb)) {
-    for (const key of Object.keys(rb)) {
-      const a = rb[key];
-      if (a && 'needsUpdate' in a) a.needsUpdate = true;
-    }
-    _lastUploadStampMap.set(rb, 1);
-  }
-  props.computeDispatchReady = true;
-  props.iterationCount++;
-  props.frameParity = (props.frameParity ?? 0) ^ 1;
-  if (props.trailMesh) updateTrailGeometry(props, now);
-};
-var _tmpQ1 = new THREE3.Quaternion();
-var _tmpV1 = new THREE3.Vector3();
-var _tmpV2 = new THREE3.Vector3();
-var _tmpM1 = new THREE3.Matrix4();
-var catmullRom = (out, outIdx, p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z, t) => {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  out[outIdx] =
-    0.5 *
-    (2 * p1x +
-      (-p0x + p2x) * t +
-      (2 * p0x - 5 * p1x + 4 * p2x - p3x) * t2 +
-      (-p0x + 3 * p1x - 3 * p2x + p3x) * t3);
-  out[outIdx + 1] =
-    0.5 *
-    (2 * p1y +
-      (-p0y + p2y) * t +
-      (2 * p0y - 5 * p1y + 4 * p2y - p3y) * t2 +
-      (-p0y + 3 * p1y - 3 * p2y + p3y) * t3);
-  out[outIdx + 2] =
-    0.5 *
-    (2 * p1z +
-      (-p0z + p2z) * t +
-      (2 * p0z - 5 * p1z + 4 * p2z - p3z) * t2 +
-      (-p0z + 3 * p1z - 3 * p2z + p3z) * t3);
-};
-var clearTrailVertex = (
-  vIdx,
-  cIdx,
-  aIdx,
-  uvIdx,
-  trailPosArr,
-  trailNextArr,
-  trailHalfWidthArr,
-  trailUVArr,
-  trailAlphaArr,
-  trailColorArr,
-  fallbackX,
-  fallbackY,
-  fallbackZ
-) => {
-  trailPosArr[vIdx] = fallbackX;
-  trailPosArr[vIdx + 1] = fallbackY;
-  trailPosArr[vIdx + 2] = fallbackZ;
-  trailPosArr[vIdx + 3] = fallbackX;
-  trailPosArr[vIdx + 4] = fallbackY;
-  trailPosArr[vIdx + 5] = fallbackZ;
-  trailNextArr[vIdx] = fallbackX;
-  trailNextArr[vIdx + 1] = fallbackY;
-  trailNextArr[vIdx + 2] = fallbackZ;
-  trailNextArr[vIdx + 3] = fallbackX;
-  trailNextArr[vIdx + 4] = fallbackY;
-  trailNextArr[vIdx + 5] = fallbackZ;
-  trailHalfWidthArr[aIdx] = 0;
-  trailHalfWidthArr[aIdx + 1] = 0;
-  trailUVArr[uvIdx] = 0;
-  trailUVArr[uvIdx + 1] = 0;
-  trailUVArr[uvIdx + 2] = 0;
-  trailUVArr[uvIdx + 3] = 0;
-  trailAlphaArr[aIdx] = 0;
-  trailAlphaArr[aIdx + 1] = 0;
-  trailColorArr[cIdx] = 0;
-  trailColorArr[cIdx + 1] = 0;
-  trailColorArr[cIdx + 2] = 0;
-  trailColorArr[cIdx + 3] = 0;
-  trailColorArr[cIdx + 4] = 0;
-  trailColorArr[cIdx + 5] = 0;
-  trailColorArr[cIdx + 6] = 0;
-  trailColorArr[cIdx + 7] = 0;
-};
-var writeTrailVertex = (
-  vIdx,
-  cIdx,
-  aIdx,
-  uvIdx,
-  hx,
-  hy,
-  hz,
-  nx,
-  ny,
-  nz,
-  halfWidth,
-  t,
-  alpha,
-  fr,
-  fg,
-  fb,
-  ca,
-  trailPosArr,
-  trailNextArr,
-  trailHalfWidthArr,
-  trailUVArr,
-  trailAlphaArr,
-  trailColorArr
-) => {
-  trailPosArr[vIdx] = hx;
-  trailPosArr[vIdx + 1] = hy;
-  trailPosArr[vIdx + 2] = hz;
-  trailPosArr[vIdx + 3] = hx;
-  trailPosArr[vIdx + 4] = hy;
-  trailPosArr[vIdx + 5] = hz;
-  trailNextArr[vIdx] = nx;
-  trailNextArr[vIdx + 1] = ny;
-  trailNextArr[vIdx + 2] = nz;
-  trailNextArr[vIdx + 3] = nx;
-  trailNextArr[vIdx + 4] = ny;
-  trailNextArr[vIdx + 5] = nz;
-  trailHalfWidthArr[aIdx] = halfWidth;
-  trailHalfWidthArr[aIdx + 1] = halfWidth;
-  trailUVArr[uvIdx] = 0;
-  trailUVArr[uvIdx + 1] = t;
-  trailUVArr[uvIdx + 2] = 1;
-  trailUVArr[uvIdx + 3] = t;
-  trailAlphaArr[aIdx] = alpha;
-  trailAlphaArr[aIdx + 1] = alpha;
-  trailColorArr[cIdx] = fr;
-  trailColorArr[cIdx + 1] = fg;
-  trailColorArr[cIdx + 2] = fb;
-  trailColorArr[cIdx + 3] = ca;
-  trailColorArr[cIdx + 4] = fr;
-  trailColorArr[cIdx + 5] = fg;
-  trailColorArr[cIdx + 6] = fb;
-  trailColorArr[cIdx + 7] = ca;
-};
-var _rawPoints = null;
-var _rawPointsSize = 0;
-var _smoothedPoints = null;
-var _smoothedPointsSize = 0;
-var _ribbonIndices = null;
-var _ribbonIndicesSize = 0;
-var _ribbonCount = 0;
-var updateTrailGeometry = (props, now) => {
-  const {
-    generalData,
-    trailPositionAttr,
-    trailAlphaAttr,
-    trailColorAttr,
-    trailNextAttr: trailNextAttrCached,
-    trailHalfWidthAttr: trailHalfWidthAttrCached,
-    trailUVAttr: trailUVAttrCached,
-    trailWidthCurveFn,
-    trailOpacityCurveFn,
-    trailColorOverTrailFns,
-    trailConfig,
-    mappedAttributes: ma,
-  } = props;
-  if (
-    !trailPositionAttr ||
-    !trailAlphaAttr ||
-    !trailColorAttr ||
-    !trailNextAttrCached ||
-    !trailHalfWidthAttrCached ||
-    !trailUVAttrCached ||
-    !trailWidthCurveFn ||
-    !trailOpacityCurveFn ||
-    !trailConfig ||
-    !generalData.positionHistory ||
-    !generalData.positionHistoryIndex ||
-    !generalData.positionHistoryCount
-  )
-    return;
-  const trailLength = trailConfig.length;
-  const positionHistory = generalData.positionHistory;
-  const historyIndex = generalData.positionHistoryIndex;
-  const historyCount = generalData.positionHistoryCount;
-  const sampleTimes = generalData.trailSampleTimes;
-  const lastSampledPos = generalData.trailLastSampledPosition;
-  const prevNormal = generalData.trailPrevNormal;
-  const minVertexDist = trailConfig.minVertexDistance;
-  const minVertexDistSq = minVertexDist * minVertexDist;
-  const maxTime = trailConfig.maxTime;
-  const maxTimeMs = maxTime * 1e3;
-  const useSmoothing = trailConfig.smoothing;
-  const subdivisions = trailConfig.smoothingSubdivisions;
-  const useTwistPrevention = trailConfig.twistPrevention;
-  const ribbonId = trailConfig.ribbonId;
-  const trailScalarArr = props.scalarArray;
-  const positionArr = ma.position.array;
-  const prevFilled = generalData.trailPrevFilledCount;
-  const trailPosArr = trailPositionAttr.array;
-  const trailAlphaArr = trailAlphaAttr.array;
-  const trailColorArr = trailColorAttr.array;
-  const trailNextArr = trailNextAttrCached.array;
-  const trailUVArr = trailUVAttrCached.array;
-  const trailHalfWidthArr = trailHalfWidthAttrCached.array;
-  const verticesPerParticle = trailLength * 2;
-  const hwm = generalData.highWaterIndex;
-  const creationTimesLength = hwm > 0 ? hwm : generalData.creationTimes.length;
-  let hasUpdates = false;
-  const useRibbon = ribbonId !== void 0;
-  let ribbonLeader = -1;
-  if (useRibbon) {
-    if (!_ribbonIndices || _ribbonIndicesSize < creationTimesLength) {
-      _ribbonIndices = new Uint32Array(creationTimesLength);
-      _ribbonIndicesSize = creationTimesLength;
-    }
-    _ribbonCount = 0;
-    for (let i = 0; i < creationTimesLength; i++) {
-      if (trailScalarArr[i * SCALAR_STRIDE + S_IS_ACTIVE]) _ribbonIndices[_ribbonCount++] = i;
-    }
-    for (let i = 1; i < _ribbonCount; i++) {
-      const key = _ribbonIndices[i];
-      const keyTime = generalData.creationTimes[key];
-      let j = i - 1;
-      while (j >= 0 && generalData.creationTimes[_ribbonIndices[j]] > keyTime) {
-        _ribbonIndices[j + 1] = _ribbonIndices[j];
-        j--;
-      }
-      _ribbonIndices[j + 1] = key;
-    }
-    if (_ribbonCount > 0) ribbonLeader = _ribbonIndices[0];
-  }
-  for (let index = 0; index < creationTimesLength; index++) {
-    const vertBase = index * verticesPerParticle;
-    if (trailScalarArr[index * SCALAR_STRIDE + S_IS_ACTIVE]) {
-      if (useRibbon && _ribbonCount >= 2 && index !== ribbonLeader) {
-        const posIdx2 = index * 3;
-        const px2 = positionArr[posIdx2];
-        const py2 = positionArr[posIdx2 + 1];
-        const pz2 = positionArr[posIdx2 + 2];
-        const histBase = (index * trailLength + historyIndex[index]) * 3;
-        positionHistory[histBase] = px2;
-        positionHistory[histBase + 1] = py2;
-        positionHistory[histBase + 2] = pz2;
-        if (sampleTimes) {
-          sampleTimes[index * trailLength + historyIndex[index]] = now;
-        }
-        historyIndex[index] = (historyIndex[index] + 1) % trailLength;
-        if (historyCount[index] < trailLength) historyCount[index]++;
-        continue;
-      }
-      hasUpdates = true;
-      const posIdx = index * 3;
-      const px = positionArr[posIdx];
-      const py = positionArr[posIdx + 1];
-      const pz = positionArr[posIdx + 2];
-      let shouldSample = true;
-      if (minVertexDist > 0 && lastSampledPos && historyCount[index] > 0) {
-        const lsIdx = index * 3;
-        const dx = px - lastSampledPos[lsIdx];
-        const dy = py - lastSampledPos[lsIdx + 1];
-        const dz = pz - lastSampledPos[lsIdx + 2];
-        if (dx * dx + dy * dy + dz * dz < minVertexDistSq) {
-          shouldSample = false;
-        }
-      }
-      if (shouldSample) {
-        const histBase = (index * trailLength + historyIndex[index]) * 3;
-        positionHistory[histBase] = px;
-        positionHistory[histBase + 1] = py;
-        positionHistory[histBase + 2] = pz;
-        if (sampleTimes) {
-          sampleTimes[index * trailLength + historyIndex[index]] = now;
-        }
-        historyIndex[index] = (historyIndex[index] + 1) % trailLength;
-        if (historyCount[index] < trailLength) historyCount[index]++;
-        if (lastSampledPos) {
-          const lsIdx = index * 3;
-          lastSampledPos[lsIdx] = px;
-          lastSampledPos[lsIdx + 1] = py;
-          lastSampledPos[lsIdx + 2] = pz;
-        }
-      }
-      let rawCount = historyCount[index];
-      let effectiveCount = rawCount;
-      if (maxTime > 0 && sampleTimes && rawCount > 0) {
-        const sampleBase = index * trailLength;
-        effectiveCount = 0;
-        for (let s = 0; s < rawCount; s++) {
-          const sampleSlot = (historyIndex[index] - 1 - s + trailLength * 2) % trailLength;
-          const age = now - sampleTimes[sampleBase + sampleSlot];
-          if (age <= maxTimeMs) {
-            effectiveCount++;
-          } else {
-            break;
-          }
-        }
-      }
-      const count = effectiveCount;
-      const ribbonWidth = trailConfig.width;
-      const trailBase = index * SCALAR_STRIDE;
-      const cr = trailScalarArr[trailBase + S_COLOR_R];
-      const cg = trailScalarArr[trailBase + S_COLOR_G];
-      const cb = trailScalarArr[trailBase + S_COLOR_B];
-      const ca = trailScalarArr[trailBase + S_COLOR_A];
-      const ringOff = index * trailLength * 3;
-      const rawPtsSize = count * 3;
-      if (!_rawPoints || _rawPointsSize < rawPtsSize) {
-        _rawPoints = new Float32Array(rawPtsSize);
-        _rawPointsSize = rawPtsSize;
-      }
-      const rawPts = _rawPoints;
-      for (let s = 0; s < count; s++) {
-        const histSlot =
-          ((historyIndex[index] - 1 - s + trailLength * 2) % trailLength) * 3 + ringOff;
-        rawPts[s * 3] = positionHistory[histSlot];
-        rawPts[s * 3 + 1] = positionHistory[histSlot + 1];
-        rawPts[s * 3 + 2] = positionHistory[histSlot + 2];
-      }
-      let finalPts;
-      let finalCount;
-      if (useSmoothing && count >= 3) {
-        const segmentCount = count - 1;
-        finalCount = segmentCount * subdivisions + 1;
-        const neededSize = finalCount * 3;
-        if (!_smoothedPoints || _smoothedPointsSize < neededSize) {
-          _smoothedPoints = new Float32Array(neededSize);
-          _smoothedPointsSize = neededSize;
-        }
-        finalPts = _smoothedPoints;
-        for (let seg = 0; seg < segmentCount; seg++) {
-          const i0 = Math.max(0, seg - 1);
-          const i1 = seg;
-          const i2 = Math.min(count - 1, seg + 1);
-          const i3 = Math.min(count - 1, seg + 2);
-          const p0x = rawPts[i0 * 3],
-            p0y = rawPts[i0 * 3 + 1],
-            p0z = rawPts[i0 * 3 + 2];
-          const p1x = rawPts[i1 * 3],
-            p1y = rawPts[i1 * 3 + 1],
-            p1z = rawPts[i1 * 3 + 2];
-          const p2x = rawPts[i2 * 3],
-            p2y = rawPts[i2 * 3 + 1],
-            p2z = rawPts[i2 * 3 + 2];
-          const p3x = rawPts[i3 * 3],
-            p3y = rawPts[i3 * 3 + 1],
-            p3z = rawPts[i3 * 3 + 2];
-          for (let sub = 0; sub < subdivisions; sub++) {
-            const t = sub / subdivisions;
-            const outIdx = (seg * subdivisions + sub) * 3;
-            catmullRom(
-              finalPts,
-              outIdx,
-              p0x,
-              p0y,
-              p0z,
-              p1x,
-              p1y,
-              p1z,
-              p2x,
-              p2y,
-              p2z,
-              p3x,
-              p3y,
-              p3z,
-              t
-            );
-          }
-        }
-        const lastOutIdx = (finalCount - 1) * 3;
-        finalPts[lastOutIdx] = rawPts[(count - 1) * 3];
-        finalPts[lastOutIdx + 1] = rawPts[(count - 1) * 3 + 1];
-        finalPts[lastOutIdx + 2] = rawPts[(count - 1) * 3 + 2];
-      } else {
-        finalPts = rawPts;
-        finalCount = count;
-      }
-      if (finalCount > trailLength) finalCount = trailLength;
-      if (useSmoothing && finalCount >= 2) {
-        const MIN_SEG_DIST_SQ = 1e-4 * 1e-4;
-        for (let d = 1; d < finalCount; d++) {
-          const pi = (d - 1) * 3;
-          const ci = d * 3;
-          const dx = finalPts[ci] - finalPts[pi];
-          const dy = finalPts[ci + 1] - finalPts[pi + 1];
-          const dz = finalPts[ci + 2] - finalPts[pi + 2];
-          if (dx * dx + dy * dy + dz * dz < MIN_SEG_DIST_SQ) {
-            finalPts[ci] = finalPts[pi];
-            finalPts[ci + 1] = finalPts[pi + 1];
-            finalPts[ci + 2] = finalPts[pi + 2];
-          }
-        }
-      }
-      const prevFilledSlots = prevFilled ? prevFilled[index] : trailLength;
-      if (prevFilled) prevFilled[index] = finalCount;
-      for (let s = 0; s < trailLength; s++) {
-        const vIdx = (vertBase + s * 2) * 3;
-        const cIdx = (vertBase + s * 2) * 4;
-        const aIdx = vertBase + s * 2;
-        const uvIdxBase = (vertBase + s * 2) * 2;
-        if (s >= finalCount) {
-          if (s >= prevFilledSlots) break;
-          clearTrailVertex(
-            vIdx,
-            cIdx,
-            aIdx,
-            uvIdxBase,
-            trailPosArr,
-            trailNextArr,
-            trailHalfWidthArr,
-            trailUVArr,
-            trailAlphaArr,
-            trailColorArr,
-            px,
-            py,
-            pz
-          );
-          continue;
-        }
-        const hx = finalPts[s * 3];
-        const hy = finalPts[s * 3 + 1];
-        const hz = finalPts[s * 3 + 2];
-        let nx, ny, nz;
-        if (s > 0 && s < finalCount - 1) {
-          const px2 = finalPts[(s - 1) * 3];
-          const py2 = finalPts[(s - 1) * 3 + 1];
-          const pz2 = finalPts[(s - 1) * 3 + 2];
-          const nx2 = finalPts[(s + 1) * 3];
-          const ny2 = finalPts[(s + 1) * 3 + 1];
-          const nz2 = finalPts[(s + 1) * 3 + 2];
-          const atx = nx2 - px2;
-          const aty = ny2 - py2;
-          const atz = nz2 - pz2;
-          const atLen = Math.sqrt(atx * atx + aty * aty + atz * atz);
-          if (atLen > 1e-4) {
-            nx = hx + atx / atLen;
-            ny = hy + aty / atLen;
-            nz = hz + atz / atLen;
-          } else {
-            nx = finalPts[(s + 1) * 3];
-            ny = finalPts[(s + 1) * 3 + 1];
-            nz = finalPts[(s + 1) * 3 + 2];
-          }
-        } else if (s < finalCount - 1) {
-          nx = finalPts[(s + 1) * 3];
-          ny = finalPts[(s + 1) * 3 + 1];
-          nz = finalPts[(s + 1) * 3 + 2];
-        } else if (finalCount >= 2) {
-          const prevX = finalPts[(s - 1) * 3];
-          const prevY = finalPts[(s - 1) * 3 + 1];
-          const prevZ = finalPts[(s - 1) * 3 + 2];
-          nx = hx + (hx - prevX);
-          ny = hy + (hy - prevY);
-          nz = hz + (hz - prevZ);
-        } else {
-          nx = hx;
-          ny = hy + 1e-3;
-          nz = hz;
-        }
-        const t = finalCount > 1 ? s / (finalCount - 1) : 0;
-        let timeFade = 1;
-        if (maxTime > 0 && sampleTimes && effectiveCount > 0) {
-          const sampleBase = index * trailLength;
-          if (useSmoothing && rawCount >= 2) {
-            const rawF = (s / Math.max(finalCount - 1, 1)) * (rawCount - 1);
-            const rawLo = Math.min(Math.floor(rawF), rawCount - 1);
-            const rawHi = Math.min(rawLo + 1, rawCount - 1);
-            const frac = rawF - rawLo;
-            const slotLo = (historyIndex[index] - 1 - rawLo + trailLength * 2) % trailLength;
-            const slotHi = (historyIndex[index] - 1 - rawHi + trailLength * 2) % trailLength;
-            const ageLo = now - sampleTimes[sampleBase + slotLo];
-            const ageHi = now - sampleTimes[sampleBase + slotHi];
-            const age = ageLo + (ageHi - ageLo) * frac;
-            timeFade = 1 - Math.min(age / maxTimeMs, 1);
-          } else {
-            const rawS = Math.min(s, rawCount - 1);
-            const sampleSlot = (historyIndex[index] - 1 - rawS + trailLength * 2) % trailLength;
-            const age = now - sampleTimes[sampleBase + sampleSlot];
-            timeFade = 1 - Math.min(age / maxTimeMs, 1);
-          }
-        }
-        const widthScale = trailWidthCurveFn(t);
-        const opacityScale = trailOpacityCurveFn(t);
-        const halfWidth = ribbonWidth * widthScale * 0.5;
-        const alpha = ca * opacityScale * timeFade;
-        const fr = trailColorOverTrailFns ? cr * trailColorOverTrailFns.r(t) : cr;
-        const fg = trailColorOverTrailFns ? cg * trailColorOverTrailFns.g(t) : cg;
-        const fb = trailColorOverTrailFns ? cb * trailColorOverTrailFns.b(t) : cb;
-        writeTrailVertex(
-          vIdx,
-          cIdx,
-          aIdx,
-          uvIdxBase,
-          hx,
-          hy,
-          hz,
-          nx,
-          ny,
-          nz,
-          halfWidth,
-          t,
-          alpha,
-          fr,
-          fg,
-          fb,
-          ca,
-          trailPosArr,
-          trailNextArr,
-          trailHalfWidthArr,
-          trailUVArr,
-          trailAlphaArr,
-          trailColorArr
-        );
-      }
-      if (useTwistPrevention && prevNormal && finalCount >= 2) {
-        const nIdx = index * 3;
-        const tx = finalPts[3] - finalPts[0];
-        const ty = finalPts[4] - finalPts[1];
-        const tz = finalPts[5] - finalPts[2];
-        const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
-        if (tLen > 1e-4) {
-          const ntx = tx / tLen;
-          const nty = ty / tLen;
-          const ntz = tz / tLen;
-          let upx = 0,
-            upy = 1,
-            upz = 0;
-          const dot = ntx * upx + nty * upy + ntz * upz;
-          if (Math.abs(dot) > 0.999) {
-            upx = 1;
-            upy = 0;
-            upz = 0;
-          }
-          let cnx = nty * upz - ntz * upy;
-          let cny = ntz * upx - ntx * upz;
-          let cnz = ntx * upy - nty * upx;
-          const cnLen = Math.sqrt(cnx * cnx + cny * cny + cnz * cnz);
-          if (cnLen > 1e-4) {
-            cnx /= cnLen;
-            cny /= cnLen;
-            cnz /= cnLen;
-          }
-          const prevNx = prevNormal[nIdx];
-          const prevNy = prevNormal[nIdx + 1];
-          const prevNz = prevNormal[nIdx + 2];
-          const hasPrev = prevNx !== 0 || prevNy !== 0 || prevNz !== 0;
-          if (hasPrev) {
-            const normalDot = cnx * prevNx + cny * prevNy + cnz * prevNz;
-            if (normalDot < 0) {
-              for (let s = 0; s < Math.min(finalCount, trailLength); s++) {
-                const aIdx = vertBase + s * 2;
-                const hw = trailHalfWidthArr[aIdx];
-                trailHalfWidthArr[aIdx] = -hw;
-                trailHalfWidthArr[aIdx + 1] = -hw;
-              }
-              cnx = -cnx;
-              cny = -cny;
-              cnz = -cnz;
-            }
-          }
-          prevNormal[nIdx] = cnx;
-          prevNormal[nIdx + 1] = cny;
-          prevNormal[nIdx + 2] = cnz;
-        }
-      }
-    } else if (historyCount[index] > 0 || (prevFilled && prevFilled[index] > 0)) {
-      hasUpdates = true;
-      historyCount[index] = 0;
-      historyIndex[index] = 0;
-      const clearSlots = prevFilled ? prevFilled[index] : trailLength;
-      if (prevFilled) prevFilled[index] = 0;
-      for (let s = 0; s < clearSlots; s++) {
-        const vIdx = (vertBase + s * 2) * 3;
-        const cIdx = (vertBase + s * 2) * 4;
-        const aIdx = vertBase + s * 2;
-        const uvIdxBase = (vertBase + s * 2) * 2;
-        clearTrailVertex(
-          vIdx,
-          cIdx,
-          aIdx,
-          uvIdxBase,
-          trailPosArr,
-          trailNextArr,
-          trailHalfWidthArr,
-          trailUVArr,
-          trailAlphaArr,
-          trailColorArr,
-          0,
-          0,
-          0
-        );
-      }
-    }
-  }
-  if (useRibbon && _ribbonCount >= 2 && _ribbonIndices) {
-    hasUpdates = true;
-    const leader = _ribbonIndices[0];
-    const leaderVertBase = leader * verticesPerParticle;
-    const controlCount = _ribbonCount;
-    const filledCount = Math.min(trailLength, Math.max(controlCount * 4, controlCount));
-    const chainSize = filledCount * 3;
-    if (!_rawPoints || _rawPointsSize < chainSize) {
-      _rawPoints = new Float32Array(chainSize);
-      _rawPointsSize = chainSize;
-    }
-    if (controlCount === 2) {
-      const p0Idx = _ribbonIndices[0] * 3;
-      const p1Idx = _ribbonIndices[1] * 3;
-      for (let i = 0; i < filledCount; i++) {
-        const t = i / (filledCount - 1);
-        _rawPoints[i * 3] = positionArr[p0Idx] + t * (positionArr[p1Idx] - positionArr[p0Idx]);
-        _rawPoints[i * 3 + 1] =
-          positionArr[p0Idx + 1] + t * (positionArr[p1Idx + 1] - positionArr[p0Idx + 1]);
-        _rawPoints[i * 3 + 2] =
-          positionArr[p0Idx + 2] + t * (positionArr[p1Idx + 2] - positionArr[p0Idx + 2]);
-      }
-    } else {
-      const segments = controlCount - 1;
-      const ptsPerSeg = Math.max(1, Math.floor((filledCount - 1) / segments));
-      let wi = 0;
-      for (let seg = 0; seg < segments && wi < filledCount; seg++) {
-        const i0 = Math.max(0, seg - 1);
-        const i1 = seg;
-        const i2 = Math.min(controlCount - 1, seg + 1);
-        const i3 = Math.min(controlCount - 1, seg + 2);
-        const p0i = _ribbonIndices[i0] * 3;
-        const p1i = _ribbonIndices[i1] * 3;
-        const p2i = _ribbonIndices[i2] * 3;
-        const p3i = _ribbonIndices[i3] * 3;
-        const subCount = seg === segments - 1 ? filledCount - wi : ptsPerSeg;
-        for (let sub = 0; sub < subCount && wi < filledCount; sub++) {
-          const t = sub / subCount;
-          catmullRom(
-            _rawPoints,
-            wi * 3,
-            positionArr[p0i],
-            positionArr[p0i + 1],
-            positionArr[p0i + 2],
-            positionArr[p1i],
-            positionArr[p1i + 1],
-            positionArr[p1i + 2],
-            positionArr[p2i],
-            positionArr[p2i + 1],
-            positionArr[p2i + 2],
-            positionArr[p3i],
-            positionArr[p3i + 1],
-            positionArr[p3i + 2],
-            t
-          );
-          wi++;
-        }
-      }
-      if (wi > 0) {
-        const lastPIdx = _ribbonIndices[controlCount - 1] * 3;
-        _rawPoints[(wi - 1) * 3] = positionArr[lastPIdx];
-        _rawPoints[(wi - 1) * 3 + 1] = positionArr[lastPIdx + 1];
-        _rawPoints[(wi - 1) * 3 + 2] = positionArr[lastPIdx + 2];
-      }
-    }
-    const leaderBase = leader * SCALAR_STRIDE;
-    const leaderCr = trailScalarArr[leaderBase + S_COLOR_R];
-    const leaderCg = trailScalarArr[leaderBase + S_COLOR_G];
-    const leaderCb = trailScalarArr[leaderBase + S_COLOR_B];
-    const leaderCa = trailScalarArr[leaderBase + S_COLOR_A];
-    const leaderPrevFilled = prevFilled ? prevFilled[leader] : trailLength;
-    if (prevFilled) prevFilled[leader] = filledCount;
-    for (let s = 0; s < trailLength; s++) {
-      const vIdx = (leaderVertBase + s * 2) * 3;
-      const cIdx = (leaderVertBase + s * 2) * 4;
-      const aIdx = leaderVertBase + s * 2;
-      const uvIdxBase = (leaderVertBase + s * 2) * 2;
-      if (s >= filledCount) {
-        if (s >= leaderPrevFilled) break;
-        clearTrailVertex(
-          vIdx,
-          cIdx,
-          aIdx,
-          uvIdxBase,
-          trailPosArr,
-          trailNextArr,
-          trailHalfWidthArr,
-          trailUVArr,
-          trailAlphaArr,
-          trailColorArr,
-          0,
-          0,
-          0
-        );
-        continue;
-      }
-      const ptIdx = s * 3;
-      const ptx = _rawPoints[ptIdx];
-      const pty = _rawPoints[ptIdx + 1];
-      const ptz = _rawPoints[ptIdx + 2];
-      let nx, ny, nz;
-      if (s > 0 && s < filledCount - 1) {
-        const px2 = _rawPoints[(s - 1) * 3];
-        const py2 = _rawPoints[(s - 1) * 3 + 1];
-        const pz2 = _rawPoints[(s - 1) * 3 + 2];
-        const nx2 = _rawPoints[(s + 1) * 3];
-        const ny2 = _rawPoints[(s + 1) * 3 + 1];
-        const nz2 = _rawPoints[(s + 1) * 3 + 2];
-        const atx = nx2 - px2;
-        const aty = ny2 - py2;
-        const atz = nz2 - pz2;
-        const atLen = Math.sqrt(atx * atx + aty * aty + atz * atz);
-        if (atLen > 1e-4) {
-          nx = ptx + atx / atLen;
-          ny = pty + aty / atLen;
-          nz = ptz + atz / atLen;
-        } else {
-          nx = _rawPoints[(s + 1) * 3];
-          ny = _rawPoints[(s + 1) * 3 + 1];
-          nz = _rawPoints[(s + 1) * 3 + 2];
-        }
-      } else if (s < filledCount - 1) {
-        nx = _rawPoints[(s + 1) * 3];
-        ny = _rawPoints[(s + 1) * 3 + 1];
-        nz = _rawPoints[(s + 1) * 3 + 2];
-      } else if (filledCount >= 2) {
-        const prevX = _rawPoints[(s - 1) * 3];
-        const prevY = _rawPoints[(s - 1) * 3 + 1];
-        const prevZ = _rawPoints[(s - 1) * 3 + 2];
-        nx = ptx + (ptx - prevX);
-        ny = pty + (pty - prevY);
-        nz = ptz + (ptz - prevZ);
-      } else {
-        nx = ptx;
-        ny = pty + 1e-3;
-        nz = ptz;
-      }
-      const t = filledCount > 1 ? s / (filledCount - 1) : 0;
-      let ribbonTimeFade = 1;
-      if (maxTime > 0 && controlCount >= 2) {
-        const ctrlF = t * (controlCount - 1);
-        const ctrlLo = Math.min(Math.floor(ctrlF), controlCount - 1);
-        const ctrlHi = Math.min(ctrlLo + 1, controlCount - 1);
-        const frac = ctrlF - ctrlLo;
-        const ageLo = now - generalData.creationTimes[_ribbonIndices[ctrlLo]];
-        const ageHi = now - generalData.creationTimes[_ribbonIndices[ctrlHi]];
-        const age = ageLo + (ageHi - ageLo) * frac;
-        ribbonTimeFade = 1 - Math.min(age / maxTimeMs, 1);
-      }
-      const widthScale = trailWidthCurveFn(t);
-      const opacityScale = trailOpacityCurveFn(t);
-      const halfWidth = trailConfig.width * widthScale * 0.5;
-      const alpha = leaderCa * opacityScale * ribbonTimeFade;
-      const fr = trailColorOverTrailFns ? leaderCr * trailColorOverTrailFns.r(t) : leaderCr;
-      const fg = trailColorOverTrailFns ? leaderCg * trailColorOverTrailFns.g(t) : leaderCg;
-      const fb = trailColorOverTrailFns ? leaderCb * trailColorOverTrailFns.b(t) : leaderCb;
-      writeTrailVertex(
-        vIdx,
-        cIdx,
-        aIdx,
-        uvIdxBase,
-        ptx,
-        pty,
-        ptz,
-        nx,
-        ny,
-        nz,
-        halfWidth,
-        t,
-        alpha,
-        fr,
-        fg,
-        fb,
-        leaderCa,
-        trailPosArr,
-        trailNextArr,
-        trailHalfWidthArr,
-        trailUVArr,
-        trailAlphaArr,
-        trailColorArr
-      );
-    }
-    if (useTwistPrevention && prevNormal && filledCount >= 2) {
-      const nIdx = leader * 3;
-      const tx = _rawPoints[3] - _rawPoints[0];
-      const ty = _rawPoints[4] - _rawPoints[1];
-      const tz = _rawPoints[5] - _rawPoints[2];
-      const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
-      if (tLen > 1e-4) {
-        const ntx = tx / tLen;
-        const nty = ty / tLen;
-        const ntz = tz / tLen;
-        let upx = 0,
-          upy = 1,
-          upz = 0;
-        const dot = ntx * upx + nty * upy + ntz * upz;
-        if (Math.abs(dot) > 0.999) {
-          upx = 1;
-          upy = 0;
-          upz = 0;
-        }
-        let cnx = nty * upz - ntz * upy;
-        let cny = ntz * upx - ntx * upz;
-        let cnz = ntx * upy - nty * upx;
-        const cnLen = Math.sqrt(cnx * cnx + cny * cny + cnz * cnz);
-        if (cnLen > 1e-4) {
-          cnx /= cnLen;
-          cny /= cnLen;
-          cnz /= cnLen;
-        }
-        const prevNx = prevNormal[nIdx];
-        const prevNy = prevNormal[nIdx + 1];
-        const prevNz = prevNormal[nIdx + 2];
-        const hasPrev = prevNx !== 0 || prevNy !== 0 || prevNz !== 0;
-        if (hasPrev) {
-          const normalDot = cnx * prevNx + cny * prevNy + cnz * prevNz;
-          if (normalDot < 0) {
-            for (let s = 0; s < Math.min(filledCount, trailLength); s++) {
-              const aIdx = leaderVertBase + s * 2;
-              const hw = trailHalfWidthArr[aIdx];
-              trailHalfWidthArr[aIdx] = -hw;
-              trailHalfWidthArr[aIdx + 1] = -hw;
-            }
-            cnx = -cnx;
-            cny = -cny;
-            cnz = -cnz;
-          }
-        }
-        prevNormal[nIdx] = cnx;
-        prevNormal[nIdx + 1] = cny;
-        prevNormal[nIdx + 2] = cnz;
-      }
-    }
-    for (let ri = 1; ri < _ribbonCount; ri++) {
-      const pIdx = _ribbonIndices[ri];
-      const pVertBase = pIdx * verticesPerParticle;
-      const pClearSlots = prevFilled ? prevFilled[pIdx] : trailLength;
-      if (prevFilled) prevFilled[pIdx] = 0;
-      for (let s = 0; s < pClearSlots; s++) {
-        const vIdx = (pVertBase + s * 2) * 3;
-        const cIdx = (pVertBase + s * 2) * 4;
-        const aIdx = pVertBase + s * 2;
-        const uvIdxBase = (pVertBase + s * 2) * 2;
-        clearTrailVertex(
-          vIdx,
-          cIdx,
-          aIdx,
-          uvIdxBase,
-          trailPosArr,
-          trailNextArr,
-          trailHalfWidthArr,
-          trailUVArr,
-          trailAlphaArr,
-          trailColorArr,
-          0,
-          0,
-          0
-        );
-      }
-    }
-  }
-  if (hasUpdates) {
-    trailPositionAttr.needsUpdate = true;
-    trailAlphaAttr.needsUpdate = true;
-    trailColorAttr.needsUpdate = true;
-    trailNextAttrCached.needsUpdate = true;
-    trailHalfWidthAttrCached.needsUpdate = true;
-    trailUVAttrCached.needsUpdate = true;
-  }
-};
-var updateParticleSystems = (cycleData) => {
-  createdParticleSystems.forEach((props) => updateParticleSystemInstance(props, cycleData));
-};
-
-// src/js/effects/three-particles/three-particles-serialization.ts
 var SERIALIZATION_VERSION = 1;
 var reverseBlendingMap = new Map(Object.entries(blendingMap).map(([k, v]) => [v, k]));
 var reverseCurveFunctionMap = /* @__PURE__ */ new Map();
@@ -3035,9 +1758,9 @@ for (const [id, fn] of Object.entries(curveFunctionIdMap)) {
 }
 function serializeAny(value, key) {
   if (value === null || value === void 0) return value;
-  if (value instanceof THREE3.Vector3) return { x: value.x, y: value.y, z: value.z };
-  if (value instanceof THREE3.Vector2) return { x: value.x, y: value.y };
-  if (value instanceof THREE3.Texture) return void 0;
+  if (value instanceof THREE4.Vector3) return { x: value.x, y: value.y, z: value.z };
+  if (value instanceof THREE4.Vector2) return { x: value.x, y: value.y };
+  if (value instanceof THREE4.Texture) return void 0;
   if (typeof value === 'function') return void 0;
   if (Array.isArray(value)) return value.map((item) => serializeAny(item));
   if (typeof value === 'object') {
@@ -3108,12 +1831,12 @@ function deserializeCurveOrValue(value) {
 function deserializeVector3(raw) {
   if (!raw || typeof raw !== 'object') return void 0;
   const { x = 0, y = 0, z = 0 } = raw;
-  return new THREE3.Vector3(x, y, z);
+  return new THREE4.Vector3(x, y, z);
 }
 function deserializeVector2(raw) {
   if (!raw || typeof raw !== 'object') return void 0;
   const { x = 1, y = 1 } = raw;
-  return new THREE3.Vector2(x, y);
+  return new THREE4.Vector2(x, y);
 }
 function deserializeConfig(raw) {
   const config = {};
@@ -3159,8 +1882,8 @@ function deserializeConfig(raw) {
     const r = raw['renderer'];
     const blending =
       typeof r['blending'] === 'string'
-        ? (blendingMap[r['blending']] ?? THREE3.NormalBlending)
-        : (r['blending'] ?? THREE3.NormalBlending);
+        ? (blendingMap[r['blending']] ?? THREE4.NormalBlending)
+        : (r['blending'] ?? THREE4.NormalBlending);
     config.renderer = { ...r, blending };
   }
   if (raw['velocityOverLifetime'] && typeof raw['velocityOverLifetime'] === 'object') {
@@ -3257,64 +1980,44 @@ function deserializeParticleSystem(json) {
 }
 
 export {
-  CollisionPlaneMode,
   CurveFunctionId,
-  EmitFrom,
-  ForceFieldFalloff,
-  ForceFieldType,
-  LifeTimeCurve,
+  ELECTRIC_ARC_BASE,
+  ELECTRIC_ARC_PRESET_CINEMATIC,
+  ELECTRIC_ARC_TIERS,
+  ELECTRIC_ARC_TIER_SEGMENTS,
+  ORGANIC_HOLD_SPAN,
+  ORGANIC_HOLD_START,
+  PULSE_DECAY,
+  PULSE_DEG_GAIN,
+  PULSE_DEG_WIDTH,
+  PULSE_MAX_SLOTS,
+  PULSE_RISE,
+  PULSE_THIN_MIN,
   REVISION,
-  RendererType,
-  SCALAR_STRIDE,
-  S_COLOR_A,
-  S_COLOR_B,
-  S_COLOR_G,
-  S_COLOR_R,
-  S_IS_ACTIVE,
-  S_LIFETIME,
-  S_ROTATION,
-  S_SIZE,
-  S_START_FRAME,
-  S_START_LIFETIME,
-  Shape,
-  SimulationBackend,
-  SimulationSpace,
-  SubEmitterTrigger,
-  TimeMode,
   applyModifiers,
-  assertNamed,
-  blendingMap,
-  calculateRandomPositionAndVelocityOnBox,
-  calculateRandomPositionAndVelocityOnCircle,
-  calculateRandomPositionAndVelocityOnCone,
-  calculateRandomPositionAndVelocityOnRectangle,
-  calculateRandomPositionAndVelocityOnSphere,
-  calculateValue,
-  createBezierCurveFunction,
-  createDefaultMeshTexture,
-  createDefaultParticleTexture,
-  createParticleSystem,
+  chaosAmplitude,
+  chaosFlickerHz,
+  coarseOffset,
+  colorToNumber,
+  createElectricArc,
   curveFunctionIdMap,
   deserializeParticleSystem,
-  getBezierCacheSize,
+  dischargeHash,
   getCurveFunction,
-  getCurveFunctionFromConfig,
-  getDefaultParticleSystemConfig,
-  isComputeCapableRenderer,
-  isLifeTimeCurve,
-  linearToSRGB,
-  normalizeBackgroundToVector3,
-  normalizeDepthTextureValue,
-  normalizeTextureValue,
-  normalizeVector2Value,
-  registerTSLMaterialFactory,
-  removeBezierCurveFunction,
-  resolveSimulationBackend,
-  resolveWebGPUEffectiveRendererType,
-  rgbSRGBToLinear,
-  sRGBToLinear,
+  getElectricArcGPUFactory,
+  getElectricArcGPURenderer,
+  globalFlicker,
+  mergeLiveConfig,
+  nextElectricArcSeed,
+  normalizeElectricArcConfig,
+  organicOffset,
+  pulseEnvelope,
+  pulseOffset,
+  registerElectricArcGPUFactory,
+  rotateZ2,
   serializeParticleSystem,
-  updateParticleSystems,
+  touchesStructuralField,
+  widthFactor,
 };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

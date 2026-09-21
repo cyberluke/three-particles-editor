@@ -23,9 +23,11 @@ let computeFatalMessage: string | null = null;
  * `uncapturederror` events on it; register exactly once, after `init()`.
  */
 const installDeviceFatal = (r: WebGPURenderer): void => {
-  const backend = (r as unknown as {
-    backend?: { device?: GPUDevice; _device?: GPUDevice };
-  }).backend;
+  const backend = (
+    r as unknown as {
+      backend?: { device?: GPUDevice; _device?: GPUDevice };
+    }
+  ).backend;
   const gpuDevice = backend?.device ?? backend?._device;
   if (!gpuDevice || typeof gpuDevice.addEventListener !== 'function') return;
   gpuDevice.addEventListener('uncapturederror', (ev: { error?: { message?: string } }) => {
@@ -101,11 +103,30 @@ const onWindowResize = (): void => {
   }
 };
 
+/**
+ * The fluid (`RendererType.FLUID`) screen-space chain builds its `pass()` nodes
+ * before this module owns a camera, so the pass nodes are bound lazily here —
+ * every pass renders the same perspective camera as the main scene.
+ */
+const bindFluidPassCameras = (container?: THREE.Object3D): void => {
+  if (!container) return;
+  container.traverse((object) => {
+    const material = (object as THREE.Mesh).material as
+      (THREE.Material & { __fluidPassNodes?: Array<{ camera: unknown }> }) | undefined;
+    const passNodes = material?.__fluidPassNodes;
+    if (!passNodes) return;
+    for (const node of passNodes) {
+      if (node && node.camera == null) node.camera = camera;
+    }
+  });
+};
+
 export const updateWorld = (
   softParticlesEnabled = false,
   particleContainer?: THREE.Object3D,
   computeNode?: unknown
 ): void => {
+  bindFluidPassCameras(particleContainer);
   // Dispatch GPU compute for WebGPU particle simulation. The three-particles
   // GPU-only kernel returns an ordered [emitNode, simNode] pair; Three.js
   // natively expands `Node[]` into the same `computeList` order as variadic
@@ -148,10 +169,14 @@ export const getComputeFailure = (): string | null => computeFatalMessage;
 
 export const setTerrain = (textureId?: string): void => {
   if (!textureId || textureId === TextureId.WIREFRAME) {
-    const material = new THREE.MeshBasicMaterial({
+    // lit material so the arc's own point lights (lighting section) have
+    // a visible effect on the ground plane; `emissive` keeps the base look
+    // matching the old 0x111111 basic material when no lights are present
+    const material = new THREE.MeshLambertMaterial({
       wireframe: true,
       depthWrite: false,
-      color: 0x111111,
+      color: 0x222222,
+      emissive: 0x111111,
     });
     mesh.material = material;
   } else {
@@ -161,10 +186,39 @@ export const setTerrain = (textureId?: string): void => {
     map.repeat.x = 50;
     map.repeat.y = 50;
     map.colorSpace = THREE.SRGBColorSpace;
-    mesh.material = new THREE.MeshBasicMaterial({
+    mesh.material = new THREE.MeshLambertMaterial({
       map,
+      emissive: 0x222222,
     });
   }
+};
+
+/**
+ * Frames the perspective camera for the fluid lattice, mirroring the reference
+ * `Camera.reset()` orbit (`xTheta = Pi/4`, `yTheta = -Pi/12`, distance, target):
+ * MLS-MPM uses `distance 70` for the `[40,30,60]` box, SPH `distance 3`.
+ */
+export const frameFluidCamera = (
+  distance: number,
+  target: readonly [number, number, number]
+): void => {
+  if (!camera || !controls) return;
+  const xTheta = Math.PI / 4;
+  const yTheta = -Math.PI / 12;
+  // `rotateX(yTheta)` then `rotateY(xTheta)` of (0, 0, distance), exactly as
+  // `recalculateView()` composes it, expressed directly.
+  const flat = distance * Math.cos(yTheta);
+  const x = flat * Math.sin(xTheta);
+  const y = -distance * Math.sin(yTheta);
+  const z = flat * Math.cos(xTheta);
+  camera.near = 0.1;
+  camera.far = 500;
+  camera.position.set(target[0] + x, target[1] + y, target[2] + z);
+  camera.updateProjectionMatrix();
+  controls.target.set(target[0], target[1], target[2]);
+  controls.minDistance = 0.3 * distance;
+  controls.maxDistance = 2 * distance;
+  controls.update();
 };
 
 export const getCamera = (): THREE.PerspectiveCamera => camera;

@@ -61,6 +61,35 @@ const SNOWFALL =
 const SMOKE =
   '{"transform":{"rotation":{"x":-90}},"startLifetime":{"min":4.23,"max":7.25},"startSpeed":{"min":0.31,"max":0.58},"startSize":{"min":28.71,"max":36.02},"startOpacity":{"min":0.141,"max":0.296},"startRotation":{"min":-360,"max":360},"shape":{"shape":"CONE","sphere":{"radius":0.4687},"cone":{"angle":0,"radius":0.3813}},"renderer":{"blending":"THREE.NormalBlending"},"sizeOverLifetime":{"isActive":true,"lifetimeCurve":{"bezierPoints":[{"x":0,"y":0.625,"percentage":0},{"x":0.2666,"y":0.845},{"x":0.3596,"y":0.4551},{"x":0.5066,"y":0.49,"percentage":0.5066},{"x":0.6966,"y":0.5349},{"x":0.6366,"y":0.99},{"x":1,"y":1,"percentage":1}]}},"colorOverLifetime":{"r":{"bezierPoints":[{"x":0,"y":1,"percentage":0},{"x":1,"y":1,"percentage":1}]},"g":{"bezierPoints":[{"x":0,"y":1,"percentage":0},{"x":1,"y":1,"percentage":1}]},"b":{"bezierPoints":[{"x":0,"y":1,"percentage":0},{"x":1,"y":1,"percentage":1}]}},"opacityOverLifetime":{"isActive":true,"lifetimeCurve":{"bezierPoints":[{"x":0,"y":0.0799,"percentage":0},{"x":0.0666,"y":0.85},{"x":0.1674,"y":1.0337},{"x":0.5,"y":1,"percentage":0.5},{"x":0.9933,"y":0.95},{"x":0.9966,"y":0.96},{"x":1,"y":0,"percentage":1}]}},"rotationOverLifetime":{"isActive":true,"min":-22.4,"max":24.3},"noise":{"isActive":true,"useRandomOffset":true,"strength":0.09,"positionAmount":0.191,"rotationAmount":1.677},"_editorData":{"textureId":"CLOUD","simulation":{"movements":"DISABLED","movementSpeed":1,"rotation":"DISABLED","rotationSpeed":1},"showLocalAxes":false,"showWorldAxes":false,"frustumCulled":true,"terrain":{"textureId":"WIREFRAME","movements":"DISABLED","movementSpeed":1,"rotation":"DISABLED","rotationSpeed":1},"gradientStops":[{"position":0,"color":{"r":255,"g":255,"b":255,"a":255}},{"position":1,"color":{"r":255,"g":255,"b":255,"a":0}}],"metadata":{"name":"Untitled-2","createdAt":1769121491665,"modifiedAt":1769121491665,"editorVersion":"2.1.0"}}}';
 
+const ELECTRIC_ARC =
+  '{"kind":"electric-arc","start":{"x":-1.1,"y":0,"z":0},"end":{"x":1.1,"y":0,"z":0},"color":"#baff63","coreColor":"#fffde0","thickness":0.04,"chaos":0.19,"chaosAlgorithm":"linear","speed":1,"segments":128,"seed":271,"intensity":12,"flickerHz":24,"endpointPinning":0.72,"rotationZ":0,"glow":{"enabled":true,"width":7.5,"intensity":1.4,"profile":"gaussian"},"contact":{"enabled":true,"radius":0.075,"intensity":15},"lighting":{"enabled":true,"endpointIntensity":30,"midpointIntensity":14,"distance":1.6,"decay":2},"sparks":{"enabled":true,"rate":7,"lifetime":[0.08,0.25],"speed":[0.6,2.8],"size":[0.05,0.3]},"branches":{"enabled":true,"maxCount":2,"probability":0.15,"length":[0.06,0.18],"thicknessScale":[0.16,0.34]}}';
+
+const FLUID_METABALL =
+  '{"duration":8,"looping":true,"startLifetime":{"min":1.4,"max":2.4},"startSpeed":{"min":1.2,"max":2.6},"startSize":{"min":0.5,"max":1.4},"startOpacity":1,"startRotation":{"min":-30,"max":30},"startColor":{"min":{"r":0.30,"g":0.72,"b":0.98},"max":{"r":0.78,"g":0.98,"b":1}},"gravity":2.4,"maxParticles":140,"emission":{"rateOverTime":90},"shape":{"shape":"CONE","cone":{"angle":22,"radius":0.24,"radiusThickness":1,"arc":360}},"transform":{"rotation":{"x":-90}},"renderer":{"rendererType":"FLUID","blending":"THREE.NormalBlending","transparent":true,"depthTest":true,"depthWrite":false,"discardBackgroundColor":true,"backgroundColorTolerance":0.2,"backgroundColor":{"r":0,"g":0,"b":0},"fluid":{"stretch":1.6,"absorption":1.05,"ior":1.33}},"sizeOverLifetime":{"isActive":true,"lifetimeCurve":{"bezierPoints":[{"x":0,"y":0.55,"percentage":0},{"x":0.15,"y":1},{"x":0.85,"y":0.9},{"x":1,"y":0,"percentage":1}]}},"opacityOverLifetime":{"isActive":true,"lifetimeCurve":{"bezierPoints":[{"x":0,"y":0,"percentage":0},{"x":0.08,"y":1},{"x":0.85,"y":0.95},{"x":1,"y":0,"percentage":1}]}},"rotationOverLifetime":{"isActive":true,"min":-20,"max":20},"noise":{"isActive":true,"useRandomOffset":true,"strength":0.18,"frequency":0.35,"octaves":2,"positionAmount":0.22},"_editorData":{"textureId":"POINT","simulation":{"movements":"DISABLED","movementSpeed":1,"rotation":"DISABLED","rotationSpeed":1},"showLocalAxes":false,"showWorldAxes":false,"frustumCulled":true,"terrain":{"textureId":"WIREFRAME","movements":"DISABLED","movementSpeed":1,"rotation":"DISABLED","rotationSpeed":1},"gradientStops":[{"position":0,"color":{"r":255,"g":255,"b":255,"a":255}},{"position":1,"color":{"r":255,"g":255,"b":255,"a":0}}],"metadata":{"name":"Fluid Metaball","createdAt":1769121500000,"modifiedAt":1769121500000,"editorVersion":"4.0.1"}}}';
+
+// Ocean-style fluid solvers (port of `matsuoka-601/webgpu-ocean`): both share
+// the screen-space fluid pass chain, only the solver kernels differ.
+const MLS_MPM_DAMBREAK =
+  '{"duration":8,"looping":false,"startLifetime":{"min":8,"max":8},"startSpeed":{"min":0,"max":0},"startSize":{"min":1.2,"max":1.2},"startOpacity":1,"startColor":{"min":{"r":0.30,"g":0.72,"b":0.98},"max":{"r":0.78,"g":0.98,"b":1.00}},"maxParticles":2164,"emission":{"rateOverTime":0},"shape":{"shape":"BOX","box":{"scale":{"x":33,"y":24,"z":30}}},"renderer":{"rendererType":"FLUID","blending":"THREE.NormalBlending","transparent":true,"depthTest":true,"depthWrite":false,"discardBackgroundColor":true,"backgroundColorTolerance":0.2,"backgroundColor":{"r":0,"g":0,"b":0},"fluid":{"sphereSize":1.2,"density":0.7,"waterColor":[0.0,0.7375,0.95],"sphereRender":false,"solver":"MLS-MPM"},"mlsMpm":{"stiffness":3,"restDensity":4,"dynamicViscosity":0.1,"dt":0.2,"gravity":-0.3,"cellSize":1,"gridSize":64,"sphereSize":1.2,"boxSize":[40,30,60],"boxWidthRatio":1}}}';
+
+const SPH_DAMBREAK =
+  '{"duration":62,"looping":false,"startLifetime":{"min":62,"max":62},"startSpeed":{"min":0,"max":0},"startSize":{"min":0.08,"max":0.08},"startOpacity":1,"startColor":{"min":{"r":0.30,"g":0.72,"b":0.98},"max":{"r":0.78,"g":0.98,"b":1.00}},"maxParticles":148,"emission":{"rateOverTime":0},"shape":{"shape":"BOX","box":{"scale":{"x":2,"y":4,"z":2}}},"renderer":{"rendererType":"FLUID","blending":"THREE.NormalBlending","transparent":true,"depthTest":true,"depthWrite":false,"discardBackgroundColor":true,"backgroundColorTolerance":0.2,"backgroundColor":{"r":0,"g":0,"b":0},"fluid":{"sphereSize":0.08,"density":0.7,"waterColor":[0.0,0.7375,0.95],"sphereRender":false,"solver":"SPH"},"sph":{"kernelRadius":0.07,"mass":1,"restDensity":15000,"stiffness":20,"nearStiffness":1,"viscosity":100,"dt":0.006,"gravity":-9.8,"sphereSize":0.08,"halfBoxSize":[1,2,1],"boxWidthRatio":1}}}';
+
+// Direct per-particle spheres instead of the screen-space metaball pass
+// chain — exercises `sphere.wgsl` (upstream `sphereRender` variant).
+const MLS_MPM_SPHERE_DEBUG =
+  '{"duration":8,"looping":false,"startLifetime":{"min":8,"max":8},"startSpeed":{"min":0,"max":0},"startSize":{"min":1.2,"max":1.2},"startOpacity":1,"startColor":{"min":{"r":0.30,"g":0.72,"b":0.98},"max":{"r":0.78,"g":0.98,"b":1.00}},"maxParticles":2164,"emission":{"rateOverTime":0},"shape":{"shape":"BOX","box":{"scale":{"x":33,"y":24,"z":30}}},"renderer":{"rendererType":"FLUID","blending":"THREE.NormalBlending","transparent":true,"depthTest":true,"depthWrite":false,"discardBackgroundColor":true,"backgroundColorTolerance":0.2,"backgroundColor":{"r":0,"g":0,"b":0},"fluid":{"sphereSize":1.2,"density":0.7,"waterColor":[0.0,0.7375,0.95],"sphereRender":true,"solver":"MLS-MPM"},"mlsMpm":{"stiffness":3,"restDensity":4,"dynamicViscosity":0.1,"dt":0.2,"gravity":-0.3,"cellSize":1,"gridSize":64,"sphereSize":1.2,"boxSize":[40,30,60],"boxWidthRatio":1}}}';
+
+// Tier-3 lattice (`boxSize=[45,40,80]`) — same MLS-MPM kernel family on a
+// noticeably bigger cell budget; still capped at ~120k particles per the
+// upstream `mlsmpmNumParticleParams[2]` preset.
+const MLS_MPM_LARGE =
+  '{"duration":8,"looping":false,"startLifetime":{"min":8,"max":8},"startSpeed":{"min":0,"max":0},"startSize":{"min":1.2,"max":1.2},"startOpacity":1,"startColor":{"min":{"r":0.30,"g":0.72,"b":0.98},"max":{"r":0.78,"g":0.98,"b":1.00}},"maxParticles":5000,"emission":{"rateOverTime":0},"shape":{"shape":"BOX","box":{"scale":{"x":38,"y":32,"z":40}}},"renderer":{"rendererType":"FLUID","blending":"THREE.NormalBlending","transparent":true,"depthTest":true,"depthWrite":false,"discardBackgroundColor":true,"backgroundColorTolerance":0.2,"backgroundColor":{"r":0,"g":0,"b":0},"fluid":{"sphereSize":1.2,"density":0.7,"waterColor":[0.0,0.7375,0.95],"sphereRender":false,"solver":"MLS-MPM"},"mlsMpm":{"stiffness":3,"restDensity":4,"dynamicViscosity":0.1,"dt":0.2,"gravity":-0.3,"cellSize":1,"gridSize":64,"sphereSize":1.2,"boxSize":[45,40,80],"boxWidthRatio":1}}}';
+
+// Tier-2 SPH box extent (`[1.2, 2, 1.2]`) on the 62^3 lattice.
+const SPH_LARGE =
+  '{"duration":62,"looping":false,"startLifetime":{"min":62,"max":62},"startSpeed":{"min":0,"max":0},"startSize":{"min":0.08,"max":0.08},"startOpacity":1,"startColor":{"min":{"r":0.30,"g":0.72,"b":0.98},"max":{"r":0.78,"g":0.98,"b":1.00}},"maxParticles":1200,"emission":{"rateOverTime":0},"shape":{"shape":"BOX","box":{"scale":{"x":2.4,"y":4,"z":2.4}}},"renderer":{"rendererType":"FLUID","blending":"THREE.NormalBlending","transparent":true,"depthTest":true,"depthWrite":false,"discardBackgroundColor":true,"backgroundColorTolerance":0.2,"backgroundColor":{"r":0,"g":0,"b":0},"fluid":{"sphereSize":0.08,"density":0.7,"waterColor":[0.0,0.7375,0.95],"sphereRender":false,"solver":"SPH"},"sph":{"kernelRadius":0.07,"mass":1,"restDensity":15000,"stiffness":20,"nearStiffness":1,"viscosity":100,"dt":0.006,"gravity":-9.8,"sphereSize":0.08,"halfBoxSize":[1.2,2,1.2],"boxWidthRatio":1}}}';
+
 export const particleExamples = [
   // Trail-based examples disabled until trail renderer performance is fixed
   // {
@@ -257,5 +286,40 @@ export const particleExamples = [
     name: 'Smoke',
     preview: './assets/examples/effects/smoke.webp',
     config: SMOKE,
+  },
+  {
+    name: 'Electric Arc',
+    preview: './examples/electric-arc/preview.webp',
+    config: ELECTRIC_ARC,
+  },
+  {
+    name: 'Fluid Metaball',
+    preview: './examples/fluid-metaball/preview.webp',
+    config: FLUID_METABALL,
+  },
+  {
+    name: 'MLS-MPM Dambreak',
+    preview: './examples/mls-mpm-dambreak/preview.webp',
+    config: MLS_MPM_DAMBREAK,
+  },
+  {
+    name: 'SPH Dambreak',
+    preview: './examples/sph-dambreak/preview.webp',
+    config: SPH_DAMBREAK,
+  },
+  {
+    name: 'MLS-MPM Sphere Debug',
+    preview: './examples/mls-mpm-sphere-debug/preview.webp',
+    config: MLS_MPM_SPHERE_DEBUG,
+  },
+  {
+    name: 'MLS-MPM Large Dambreak',
+    preview: './examples/mls-mpm-large-dambreak/preview.webp',
+    config: MLS_MPM_LARGE,
+  },
+  {
+    name: 'SPH Large Dambreak',
+    preview: './examples/sph-large-dambreak/preview.webp',
+    config: SPH_LARGE,
   },
 ];

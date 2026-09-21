@@ -11,6 +11,10 @@
 export const isConfigV2 = (config: any): boolean => {
   if (!config) return false;
 
+  // First-class subsystem configs (§34): the Electric Arc flat format is
+  // authored against the current engine and never needs legacy conversion.
+  if (config.kind === 'electric-arc') return true;
+
   // First, check for explicit version information in metadata
   // If editorVersion is present and >= 2.0.0, it's definitely v2.x
   if (config._editorData?.metadata?.editorVersion) {
