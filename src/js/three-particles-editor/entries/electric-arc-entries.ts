@@ -139,21 +139,42 @@ export const createElectricArcEntries = ({
   const cfg = particleSystemConfig;
 
   // Make sure every section object exists (matches engine normalization of
-  // a missing section), so controllers always have a stable parent object.
+  // a missing section) AND every known key inside it is defined, so lil-gui
+  // `add()` always gets a primitive value and returns a controller. A loaded
+  // config can carry a PARTIAL section (e.g. lighting without `distance` /
+  // `decay`); without seeding, `add()` returns `undefined` for the missing
+  // key and the chained `.onChange(...)` throws.
+  const fillSection = (
+    section: Record<string, unknown>,
+    defaults: Record<string, unknown>
+  ): void => {
+    for (const key of Object.keys(defaults)) {
+      if (section[key] === undefined) {
+        const dv = defaults[key];
+        section[key] = Array.isArray(dv) ? [...dv] : dv;
+      }
+    }
+  };
+
   cfg.glow = cfg.glow ?? { ...DEFAULTS.glow };
+  fillSection(cfg.glow, DEFAULTS.glow);
   cfg.contact = cfg.contact ?? { ...DEFAULTS.contact };
+  fillSection(cfg.contact, DEFAULTS.contact);
   cfg.lighting = cfg.lighting ?? { ...DEFAULTS.lighting };
+  fillSection(cfg.lighting, DEFAULTS.lighting);
   cfg.sparks = cfg.sparks ?? {
     ...DEFAULTS.sparks,
     lifetime: [...DEFAULTS.sparks.lifetime],
     speed: [...DEFAULTS.sparks.speed],
     size: [...DEFAULTS.sparks.size],
   };
+  fillSection(cfg.sparks, DEFAULTS.sparks);
   cfg.branches = cfg.branches ?? {
     ...DEFAULTS.branches,
     length: [...DEFAULTS.branches.length],
     thicknessScale: [...DEFAULTS.branches.thicknessScale],
   };
+  fillSection(cfg.branches, DEFAULTS.branches);
   cfg.start.x = cfg.start.x ?? 0;
   cfg.start.y = cfg.start.y ?? 0;
   cfg.start.z = cfg.start.z ?? 0;

@@ -98,6 +98,8 @@ export const createTextureSheetAnimationEntries = ({
 
   return {
     onParticleSystemChange: (): void => {
+      // Tolerate configs without `textureSheetAnimation` (Electric Arc flat config).
+      if (!particleSystemConfig.textureSheetAnimation) return;
       if (lastInitedTimeMode !== particleSystemConfig.textureSheetAnimation.timeMode)
         createEntriesByTimeMode({
           folder,

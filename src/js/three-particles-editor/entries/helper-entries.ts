@@ -160,7 +160,8 @@ export const createHelperEntries = ({
     .listen();
 
   const updateShapeHelperVisibility = (): void => {
-    if (currentParticleSystem) {
+    // The flat Electric Arc config has no `shape` section — skip then.
+    if (currentParticleSystem && particleSystemConfig.shape) {
       updateShapeHelper(
         currentParticleSystem.instance,
         particleSystemConfig.shape,

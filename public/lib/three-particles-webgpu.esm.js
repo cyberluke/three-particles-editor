@@ -10,7 +10,7 @@ export {
   normalizeVector2Value,
   resolveWebGPUEffectiveRendererType,
 } from '@cyberluke/three-particles';
-import * as THREE2 from 'three';
+import * as THREE3 from 'three';
 import {
   Vector3,
   Vector4,
@@ -282,7 +282,7 @@ var calculateValue = (particleSystemId, value, time = 0) => {
     if (value.min === value.max) {
       return value.min ?? 0;
     }
-    return THREE2.MathUtils.randFloat(value.min ?? 0, value.max ?? 1);
+    return THREE3.MathUtils.randFloat(value.min ?? 0, value.max ?? 1);
   }
   const lifetimeCurve = value;
   return (
@@ -387,8 +387,6 @@ function createForceFieldTSL(sCurveData, forceFieldOffset, forceFieldCount) {
     apply: applyForceFieldsTSL,
   };
 }
-
-// src/js/effects/three-particles/webgpu/curve-bake.ts
 var CURVE_RESOLUTION = 256;
 function bakeCurve(curveFn, resolution = CURVE_RESOLUTION) {
   const samples = new Float32Array(resolution);
@@ -2389,7 +2387,7 @@ var nBasis = (out, a, b) => {
 };
 function ribbonGeometry(start, count, u0, u1) {
   const vertCount = count * 2;
-  const geometry = new THREE2.BufferGeometry();
+  const geometry = new THREE3.BufferGeometry();
   const pos = new Float32Array(vertCount * 4);
   const uv2 = new Float32Array(vertCount * 2);
   const idx = new Uint16Array((count - 1) * 6);
@@ -2427,40 +2425,40 @@ function ribbonGeometry(start, count, u0, u1) {
     idx[o + 4] = r1;
     idx[o + 5] = l1;
   }
-  geometry.setAttribute('position', new THREE2.BufferAttribute(pos, 4));
-  geometry.setAttribute('uv', new THREE2.BufferAttribute(uv2, 2));
-  geometry.setIndex(new THREE2.BufferAttribute(idx, 1));
-  geometry.boundingSphere = new THREE2.Sphere(new Vector3(), 8);
+  geometry.setAttribute('position', new THREE3.BufferAttribute(pos, 4));
+  geometry.setAttribute('uv', new THREE3.BufferAttribute(uv2, 2));
+  geometry.setIndex(new THREE3.BufferAttribute(idx, 1));
+  geometry.boundingSphere = new THREE3.Sphere(new Vector3(), 8);
   return geometry;
 }
 function contactGeometry() {
-  const geometry = new THREE2.BufferGeometry();
+  const geometry = new THREE3.BufferGeometry();
   geometry.setAttribute(
     'position',
-    new THREE2.BufferAttribute(new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), 2)
+    new THREE3.BufferAttribute(new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), 2)
   );
   geometry.setAttribute(
     'uv',
-    new THREE2.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), 2)
+    new THREE3.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), 2)
   );
-  geometry.setIndex(new THREE2.BufferAttribute(new Uint16Array([0, 1, 2, 1, 3, 2]), 1));
-  geometry.boundingSphere = new THREE2.Sphere(new Vector3(), 1);
+  geometry.setIndex(new THREE3.BufferAttribute(new Uint16Array([0, 1, 2, 1, 3, 2]), 1));
+  geometry.boundingSphere = new THREE3.Sphere(new Vector3(), 1);
   return geometry;
 }
 var setNum = (u, v) => {
   u.value = v;
 };
 function createElectricArcGPU(cfg) {
-  const root = new THREE2.Group();
+  const root = new THREE3.Group();
   root.name = 'electric-arc-gpu';
   const pipeline = createElectricArcCompute(cfg);
   const { arcBuffer, widthBuffer, totalSamples, uniforms, mainCount } = pipeline;
   const coreColorVec = new Vector3();
   const arcColorVec = new Vector3();
   const setColors = () => {
-    const c = new THREE2.Color(cfg.coreColor);
+    const c = new THREE3.Color(cfg.coreColor);
     coreColorVec.set(c.r, c.g, c.b);
-    const a = new THREE2.Color(cfg.color);
+    const a = new THREE3.Color(cfg.color);
     arcColorVec.set(a.r, a.g, a.b);
   };
   setColors();
@@ -2502,7 +2500,7 @@ function createElectricArcGPU(cfg) {
       layers: spec.layers,
       profileMode: prof,
     });
-    const mesh = new THREE2.Mesh(mainGeo, handles.material);
+    const mesh = new THREE3.Mesh(mainGeo, handles.material);
     mesh.frustumCulled = false;
     root.add(mesh);
     mainMeshes.push({ mesh, handles, layer: spec.layers });
@@ -2528,7 +2526,7 @@ function createElectricArcGPU(cfg) {
       layers: 'core',
       profileMode: prof,
     });
-    const mesh = new THREE2.Mesh(geo, branchHandles.material);
+    const mesh = new THREE3.Mesh(geo, branchHandles.material);
     mesh.frustumCulled = false;
     root.add(mesh);
     branchGeos.push(geo);
@@ -2548,7 +2546,7 @@ function createElectricArcGPU(cfg) {
         intensity: cfg.contact.intensity,
         flicker: uniforms.globalFlicker,
       });
-      const mesh = new THREE2.Mesh(contactGeo, handles.material);
+      const mesh = new THREE3.Mesh(contactGeo, handles.material);
       mesh.frustumCulled = false;
       root.add(mesh);
       contactMeshes.push({ mesh, handles, center });

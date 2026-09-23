@@ -9,7 +9,7 @@ import {
   S_COLOR_B,
   S_ROTATION,
   SCALAR_STRIDE,
-} from './chunk-3TGONQGU.js';
+} from './chunk-RVTP4DNX.js';
 export {
   CollisionPlaneMode,
   EmitFrom,
@@ -63,7 +63,7 @@ export {
   rgbSRGBToLinear,
   sRGBToLinear,
   updateParticleSystems,
-} from './chunk-3TGONQGU.js';
+} from './chunk-RVTP4DNX.js';
 import * as THREE7 from 'three';
 import Easing from 'easing-functions';
 
@@ -1315,7 +1315,7 @@ function createArcLighting(cfg) {
 var _createParticleSystem = null;
 async function resolveParticleSystemFactory() {
   if (_createParticleSystem) return _createParticleSystem;
-  const mod = await import('./three-particles-XJBIM5P3.js');
+  const mod = await import('./three-particles-OPLKH5F3.js');
   _createParticleSystem = mod.createParticleSystem;
   return _createParticleSystem;
 }

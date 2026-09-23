@@ -531,15 +531,16 @@ export const createRendererEntries = ({
   return {
     onReset: rebuild,
     onParticleSystemChange: (): void => {
-      const currentRendererType = particleSystemConfig.renderer.rendererType || 'POINTS';
+      // Tolerate configs without a `renderer` section (Electric Arc flat config).
+      const currentRendererType = particleSystemConfig.renderer?.rendererType || 'POINTS';
       if (lastRendererType !== currentRendererType) {
         lastRendererType = currentRendererType;
         rebuild();
         return;
       }
       // It looks onChange doesn't work on dropdown entry so have to handle it manually
-      if (lastUsedTextureId !== particleSystemConfig._editorData.textureId) {
-        setConfigByTexture(particleSystemConfig._editorData.textureId);
+      if (lastUsedTextureId !== particleSystemConfig._editorData?.textureId) {
+        setConfigByTexture(particleSystemConfig._editorData?.textureId);
         recreateParticleSystem();
       }
     },

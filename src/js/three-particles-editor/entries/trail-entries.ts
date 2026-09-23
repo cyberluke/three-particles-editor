@@ -276,7 +276,8 @@ export const createTrailEntries = ({
   return {
     onReset: rebuild,
     onParticleSystemChange: (): void => {
-      const currentRendererType = particleSystemConfig.renderer.rendererType || 'POINTS';
+      // Tolerate configs without a `renderer` section (Electric Arc flat config).
+      const currentRendererType = particleSystemConfig.renderer?.rendererType || 'POINTS';
       if (lastRendererType !== currentRendererType) {
         lastRendererType = currentRendererType;
         rebuild();

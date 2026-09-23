@@ -43,6 +43,9 @@ export const createShapeEntries = ({
 
   return {
     onParticleSystemChange: (): void => {
+      // Stale entries may run against a non-particle-system config (e.g. the
+      // flat Electric Arc config has no `shape` section) — skip gracefully.
+      if (!particleSystemConfig.shape) return;
       if (lastInitedShape !== particleSystemConfig.shape.shape)
         createEntriesByShape({
           folder,
