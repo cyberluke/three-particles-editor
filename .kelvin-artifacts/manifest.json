@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "artifactId": "909dd3b3428f8ed5b2c3244af27ecb93b73b8da548943c88819470ab79c96676",
+      "ref": "artifact://sha256/909dd3b3428f8ed5b2c3244af27ecb93b73b8da548943c88819470ab79c96676",
+      "byteLength": 161392,
+      "kind": "tool-output",
+      "mediaType": "application/json",
+      "source": "list_files",
+      "createdAt": 1790076992115,
+      "persistence": "persisted",
+      "index": "degraded",
+      "embeddingBackend": "native-npu",
+      "locationRef": "d:\\_SATIN_AI\\three-particles-editor\\.kelvin-artifacts\\909dd3b3428f8ed5b2c3244af27ecb93b73b8da548943c88819470ab79c96676.bin",
+      "indexFailureKind": "timeout",
+      "indexRetryable": true,
+      "indexFailureReason": "kelvin-core NPU queue timed out"
+    }
+  ]
+}

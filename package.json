@@ -1,6 +1,6 @@
 {
   "name": "@cyberluke/three-particles-editor",
-  "version": "4.0.4",
+  "version": "4.1.2",
   "type": "module",
   "private": false,
   "description": "Visual editor and offline example gallery for the @cyberluke/three-particles WebGPU particle framework.",
@@ -35,7 +35,7 @@
     "smui-theme-dark": "node scripts/compile-theme.js public/build/static/smui-dark.css src/theme --dark",
     "lint": "eslint src/",
     "format": "prettier --write \"src/**/*.{js,svelte}\"",
-    "test": "jest",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "release": "semantic-release",
     "mirror": "node scripts/sync-public.mjs"
   },

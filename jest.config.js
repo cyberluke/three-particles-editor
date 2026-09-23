@@ -4,6 +4,10 @@ export default {
   testEnvironment: 'node',
   extensionsToTreatAsEsm: ['.ts'],
   testMatch: ['**/__tests__/**/*.test.ts'],
+  // The vendored oracle snapshot ships a second copy of the engine package
+  // manifest; keeping it out of the haste map resolves the `@cyberluke/*`
+  // duplicate-package collision (the oracle is evidence, never imported).
+  modulePathIgnorePatterns: ['<rootDir>/three-particles-oracle-9740f96/'],
   // Jest 30's `default-esm` preset does not inject `jest`/`describe`/`it`/…
   // onto `globalThis`, which breaks the ~40 test files written against the
   // legacy CJS globals. This small setup file mirrors `@jest/globals` onto
@@ -12,6 +16,9 @@ export default {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    // Keep the workspace package and the source files on ONE module
+    // instance: the TSL factory registry lives in three-particles.ts.
+    '^@cyberluke/three-particles$': '<rootDir>/packages/three-particles/src/index.ts',
     // Route `three` subpaths to physical ESM builds so Jest's CJS require()
     // does not go through the deprecated `three.cjs` shim (which itself
     // `require`s the ESM module and trips Jest's non-ESM parser).

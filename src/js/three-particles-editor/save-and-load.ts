@@ -69,15 +69,33 @@ const serializeSubEmitters = (subEmitters: any[] | undefined): any[] | undefined
   });
 };
 
-export const copyToClipboard = (particleSystemConfig) => {
-  const type = 'text/plain';
+/** True for the flat Electric Arc subsystem config (§34). */
+export const isElectricArcConfig = (config: any): boolean => config?.kind === 'electric-arc';
 
-  const serialized: any = {
+/**
+ * Canonical JSON projection used by every export path (clipboard + save
+ * dialog). The particle-system export is a diff against the engine default;
+ * the Electric Arc subsystem is a flat first-class config whose keys are not
+ * part of that default, so it is serialized whole (otherwise the diff drops
+ * `kind` / `start` / `end` and the config cannot be re-loaded).
+ */
+export const serializeParticleSystemConfig = (particleSystemConfig: any): any => {
+  if (isElectricArcConfig(particleSystemConfig)) {
+    const { _editorData, ...rest } = particleSystemConfig;
+    return { ...rest, _editorData: { ..._editorData } };
+  }
+  return {
     ...getObjectDiff(getDefaultParticleSystemConfig(), particleSystemConfig, {
       skippedProperties: ['map', 'geometry', 'depthTexture'],
     }),
     _editorData: { ...particleSystemConfig._editorData },
   };
+};
+
+export const copyToClipboard = (particleSystemConfig) => {
+  const type = 'text/plain';
+
+  const serialized: any = serializeParticleSystemConfig(particleSystemConfig);
 
   // Include force fields if present
   if (particleSystemConfig.forceFields && particleSystemConfig.forceFields.length > 0) {
@@ -169,6 +187,32 @@ export const loadParticleSystem = ({
 
     // Use the converted config instead of the original
     config = convertedConfig;
+  }
+
+  // Electric Arc subsystem (§34): the flat section config IS the whole record,
+  // so it replaces the editor config wholesale instead of layering on top of
+  // the particle-system defaults (whose keys are not part of the arc contract
+  // and would otherwise leak into every re-export).
+  if (isElectricArcConfig(config)) {
+    const mergedEditorData = {
+      ...particleSystemConfig._editorData,
+      ...(config._editorData || {}),
+    };
+    Object.keys(particleSystemConfig).forEach((key) => {
+      delete particleSystemConfig[key];
+    });
+    deepMerge(particleSystemConfig, JSON.parse(JSON.stringify(config)), {
+      skippedProperties: ['map', 'geometry', 'depthTexture'],
+      applyToFirstObject: true,
+    });
+    particleSystemConfig._editorData = mergedEditorData;
+
+    recreateParticleSystem(false);
+    if (onLoad) {
+      onLoad();
+    }
+    showSuccessSnackbar('Particle system successfully loaded');
+    return;
   }
 
   // Expand sub-emitter configs from diff form to full configs before merging

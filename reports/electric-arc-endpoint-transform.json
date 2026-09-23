@@ -1,0 +1,121 @@
+{
+  "package": {
+    "engine": "@cyberluke/three-particles",
+    "editor": "@cyberluke/three-particles-editor",
+    "version": "4.1.2",
+    "previousVersion": "4.1.1"
+  },
+  "changedPublicApi": {
+    "ElectricArcConfig": {
+      "added": [
+        "startOffset?: Point3D | THREE.Vector3 (default {0,0,0})",
+        "endOffset?: Point3D | THREE.Vector3 (default {0,0,0})",
+        "startRotation?: EndpointRotation (degrees, default 0)",
+        "endRotation?: EndpointRotation (degrees, default 0)"
+      ],
+      "unchanged": ["start", "end", "rotationZ", "all other existing fields"]
+    },
+    "newTypes": [
+      "EndpointRotation { pitch?, yaw?, roll? } (degrees)",
+      "ElectricArcFrame { tangent, normal, binormal }",
+      "ElectricArcRuntimeEndpoints { baseStart, baseEnd, effectiveStart, effectiveEnd, startFrame, endFrame }"
+    ],
+    "ElectricArc": {
+      "added": ["getRuntimeEndpoints(): ElectricArcRuntimeEndpoints (read-only)"],
+      "changedSemantics": [
+        "setEndpoints(start,end): updates base runtime anchors only; persistent transforms are preserved"
+      ]
+    }
+  },
+  "changedNormalizedConfig": {
+    "startOffset": "THREE.Vector3, non-optional, zero default",
+    "endOffset": "THREE.Vector3, non-optional, zero default",
+    "startRotation": "{ pitch, yaw, roll } resolved degrees, non-optional",
+    "endRotation": "{ pitch, yaw, roll } resolved degrees, non-optional"
+  },
+  "liveConfigChanges": {
+    "mergeLiveConfig": "consumes startOffset/endOffset per component (finite-only merge, partial patches keep unspecified components) and startRotation/endRotation per component; NaN components keep previous value",
+    "structuralFields": "unchanged: segments, quality, simulationBackend, chaosAlgorithm (all new fields are non-structural / no rebuild)"
+  },
+  "runtimeComposition": [
+    "1. resolveEndpoints(): binding (Object3D/object+offset) or direct anchors -> base anchors",
+    "2. chord frame from base anchors: N = normalize(end-start); U = N x helper; V = N x U; degenerate chord fallback N=(0,0,1),U=(1,0,0),V=(0,1,0)",
+    "3. effective = base + R(pitch,yaw,roll)_XYZ * offset mapped x->U, y->V, z->N",
+    "4. rotationZ (whole-arc roll, degrees) applied to both effective endpoints, after composition (identical to 4.1.1 behavior)",
+    "5. effective endpoints fed to the shared CPU/WebGPU arc generation path"
+  ],
+  "coordinateSpace": {
+    "choice": "ENDPOINT_FRAME_LOCAL",
+    "axes": {
+      "x": "U (chord helper, N x worldY or N x worldX)",
+      "y": "V (N x U)",
+      "z": "N (chord tangent, base start->end)"
+    },
+    "note": "frame derived from BASE anchors once per frame; stable under continuous ribbon updates"
+  },
+  "rotationSemantics": {
+    "startRotation_endRotation": "local endpoint-frame Euler adjustments in degrees (XYZ order) applied to the endpoint offset; zero offset => rotation unobservable",
+    "rotationZ": "global whole-arc roll around Z applied after per-endpoint composition; NOT reinterpreted"
+  },
+  "backwardCompatibility": [
+    "configs with only start/end/rotationZ produce byte-for-behavior identical output (test: zero transforms reproduce legacy output exactly)",
+    "editor-relative 'offset' chord remains a derived display value, not part of the engine config",
+    "setEndpoints/bindEndpoints/clearEndpointBinding signatures unchanged",
+    "standalone and ribbon-tied modes both covered by tests"
+  ],
+  "editorReadback": {
+    "persistent": [
+      "startOffset",
+      "endOffset",
+      "startRotation",
+      "endRotation",
+      "rotationZ",
+      "start",
+      "end"
+    ],
+    "readOnly": [
+      "baseStart",
+      "baseEnd",
+      "effectiveStart",
+      "effectiveEnd",
+      "startFrame.tangent/normal/binormal",
+      "endFrame.tangent/normal/binormal",
+      "chord (end-start)"
+    ]
+  },
+  "serialization": {
+    "serialized": [
+      "start",
+      "end",
+      "startOffset",
+      "endOffset",
+      "startRotation",
+      "endRotation",
+      "rotationZ"
+    ],
+    "notSerialized": ["baseStart", "baseEnd", "effectiveStart", "effectiveEnd", "frames"],
+    "roundTrip": "config -> JSON -> normalizeElectricArcConfig -> same effective behavior (test covered)"
+  },
+  "performanceNotes": [
+    "per-frame composition allocation-free: reused Vector3/Euler/Matrix4 scratch, addScaledVector accumulation",
+    "no JSON cloning in update(); getRuntimeEndpoints() small plain-object allocations are diagnostics-only",
+    "setEndpoints() allocation profile unchanged (two anchor vectors as in 4.1.1)"
+  ],
+  "validation": {
+    "engineTests": "packages/three-particles/src/__tests__/electric-arc.test.ts (26 passed)",
+    "coveredCases": [
+      "zero transforms reproduce pre-change output",
+      "setEndpoints updates anchors without clearing offsets",
+      "offset survives repeated frame updates",
+      "offset serialization round-trip",
+      "rotationZ unchanged (90 deg maps +X chord onto +Y)",
+      "endpoint rotation produces observable direction change",
+      "standalone mode",
+      "ribbon-tied mode (bindEndpoints)",
+      "NaN components fall back to previous value",
+      "partial live-config patches",
+      "zero-length chord keeps finite frames"
+    ]
+  },
+  "docs": ["docs/electric-arc-endpoint-transform.md"]
+}

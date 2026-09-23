@@ -7,7 +7,77 @@ Why it stands out:
 - **WebGPU compute** — gravity, velocity, 7 lifetime modifiers, point/directional force fields + collision planes and 3D simplex noise run in Three.js TSL compute kernels: 50K–350K+ textured particles at full framerate, one draw call. (The CPU path used to be the bottleneck for real 350K+ counts — the whole simulation was reworked around compute; emission, sub-emitters and `updateConfig()` remain CPU, the TRAIL renderer always simulates on CPU.)
 - **Five renderer types in the exported config** — `POINTS` billboard quads, `INSTANCED` sprites (no `gl_PointSize` limit), `TRAIL` ribbons with width/opacity/color tapering, `MESH` debris/gems/coins with full 3D rotation and lighting, `FLUID` volumetric-metaball liquid (sphere normals, Beer-Lambert absorption, Fresnel reflections).
 - **Unity-familiar workflow** — bursts, sub-emitters, collision planes (kill/clamp/bounce), Bézier over-lifetime curves baked to 256-sample lookups; every example ships as a copy-paste config.
-- **Pinned versions** — three.js r186 (`"three": "^0.186.0"`), svelte 5 editor. With this engine we do not recommend react-three-fiber for now: react 19.3 is breaking it upstream ([react-three-fiber#3915](https://github.com/pmndrs/react-three-fiber/issues/3915)) — use three.js r186+ directly.
+- **Pinned versions** — three.js r186 (`"three": "^0.186.0"`), svelte 5 editor.
+- **React Three Fiber supported and working** — no wrapper package needed, drive the engine from R3F hooks directly:
+
+### Usage with React Three Fiber
+
+The library works seamlessly with React Three Fiber. No additional wrapper package is needed — use createParticleSystem directly with React hooks:
+
+```tsx
+import { useRef, useEffect } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { createParticleSystem, Shape, type ParticleSystem } from '@newkrok/three-particles';
+import * as THREE from 'three';
+
+function FireEffect({ config }: { config?: Record<string, unknown> }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const systemRef = useRef<ParticleSystem | null>(null);
+
+  useEffect(() => {
+    const system = createParticleSystem({
+      duration: 5,
+      looping: true,
+      maxParticles: 200,
+      startLifetime: { min: 0.5, max: 1.5 },
+      startSpeed: { min: 1, max: 3 },
+      startSize: { min: 0.3, max: 0.8 },
+      startColor: {
+        min: { r: 1, g: 0.2, b: 0 },
+        max: { r: 1, g: 0.8, b: 0 },
+      },
+      gravity: -1,
+      emission: { rateOverTime: 50 },
+      shape: { shape: Shape.CONE, cone: { angle: 0.2, radius: 0.3 } },
+      renderer: {
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+      },
+      ...config,
+    });
+
+    systemRef.current = system;
+    groupRef.current?.add(system.instance);
+
+    return () => {
+      system.dispose();
+    };
+  }, [config]);
+
+  useFrame((_, delta) => {
+    systemRef.current?.update({
+      now: performance.now(),
+      delta,
+      elapsed: 0,
+    });
+  });
+
+  return <group ref={groupRef} />;
+}
+
+// In your R3F Canvas:
+// <Canvas>
+//   <FireEffect />
+// </Canvas>
+```
+
+Key points:
+
+- Use useEffect to create and dispose the particle system
+- Use useFrame to drive updates each frame (call system.update() instead of updateParticleSystems() for per-system control)
+- Add the system.instance to a `<group>` ref so R3F manages the scene graph
+- Return a cleanup function from useEffect that calls system.dispose()
 - **Offline gallery** — all example modules, three.js builds and textures are mirrored as static files, so the whole page works without a network.
 
 Author: **CyberLuke** — the single maintained line since v4.

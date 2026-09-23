@@ -41,3 +41,10 @@ const _require = createRequire(import.meta.url);
 globalThis.require = _require;
 globalThis.__dirname = _require('node:url').fileURLToPath(new URL('.', import.meta.url));
 globalThis.__filename = _require('node:url').fileURLToPath(import.meta.url);
+
+// The engine is GPU-only (v4): `createParticleSystem` throws unless the TSL
+// material + compute-pipeline factory is registered. Register the real
+// factory (no renderer → no compute-capability probe) so every suite runs
+// against the same module instance as the sources.
+import { enableWebGPU } from '../packages/three-particles/src/webgpu.js';
+enableWebGPU();

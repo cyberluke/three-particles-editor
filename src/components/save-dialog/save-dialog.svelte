@@ -3,8 +3,7 @@
   import Button, { Label, Icon } from '@smui/button';
   import Dialog, { Title, Content, Actions } from '@smui/dialog';
   import Textfield from '@smui/textfield';
-  import { getObjectDiff } from '../../js/three-particles-editor/save-and-load';
-  import { getDefaultParticleSystemConfig } from '@cyberluke/three-particles';
+  import { serializeParticleSystemConfig } from '../../js/three-particles-editor/save-and-load';
   import { generateDefaultName } from '../../js/utils/name-utils';
   import { showSuccessSnackbar, showErrorSnackbar } from '../../js/stores/snackbar-store';
   import Prism from 'prismjs';
@@ -288,16 +287,7 @@
       configName = metadata.name;
     }
 
-    configContent = JSON.stringify(
-      {
-        ...getObjectDiff(getDefaultParticleSystemConfig(), rawConfigData, {
-          skippedProperties: ['map'],
-        }),
-        _editorData: { ...rawConfigData._editorData },
-      },
-      null,
-      2
-    ); // Pretty print with 2 spaces indentation
+    configContent = JSON.stringify(serializeParticleSystemConfig(rawConfigData), null, 2); // Pretty print with 2 spaces indentation
 
     // Load saved configs when dialog opens
     loadSavedConfigs();

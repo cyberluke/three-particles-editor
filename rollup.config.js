@@ -80,6 +80,8 @@ export default {
     format: 'iife',
     name: 'app',
     file: 'public/build/bundle.js',
+    banner:
+      '/*! GENERATED FILE - DO NOT EDIT. Source: src/main.js (+ src/js/**, src/components/**). Regenerate: npm run build:editor */',
   },
 
   plugins: [
@@ -114,9 +116,7 @@ export default {
         typescript: {
           tsconfigFile: './tsconfig.json',
         },
-        scss: {
-          /** options */
-        },
+        scss: {/** options */},
       }),
     }),
     // we'll extract any component CSS out into

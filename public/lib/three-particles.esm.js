@@ -9,7 +9,7 @@ import {
   S_COLOR_B,
   S_ROTATION,
   SCALAR_STRIDE,
-} from './chunk-CLTF56CS.js';
+} from './chunk-3TGONQGU.js';
 export {
   CollisionPlaneMode,
   EmitFrom,
@@ -63,12 +63,12 @@ export {
   rgbSRGBToLinear,
   sRGBToLinear,
   updateParticleSystems,
-} from './chunk-CLTF56CS.js';
-import * as THREE4 from 'three';
+} from './chunk-3TGONQGU.js';
+import * as THREE7 from 'three';
 import Easing from 'easing-functions';
 
 // src/js/effects/three-particles/version.ts
-var REVISION = '4.0.4';
+var REVISION = '4.1.2';
 if (typeof globalThis !== 'undefined') {
   const g = globalThis;
   if (g.__THREE_PARTICLES__ && g.__THREE_PARTICLES__ !== REVISION) {
@@ -307,17 +307,33 @@ var toVec3 = (p, out) => {
   return out.set(p.x ?? 0, p.y ?? 0, p.z ?? 0);
 };
 var isPlainObj = (v) => typeof v === 'object' && v !== null;
+var toEuler = (r) => ({
+  pitch: Number.isFinite(r?.pitch) ? Number(r?.pitch) : 0,
+  yaw: Number.isFinite(r?.yaw) ? Number(r?.yaw) : 0,
+  roll: Number.isFinite(r?.roll) ? Number(r?.roll) : 0,
+});
+var mergeVec3 = (p, out) => {
+  if (!p) return;
+  const q = p;
+  if (Number.isFinite(q.x)) out.x = Number(q.x);
+  if (Number.isFinite(q.y)) out.y = Number(q.y);
+  if (Number.isFinite(q.z)) out.z = Number(q.z);
+};
 var nextElectricArcSeed = () =>
   pcg01Scalar(mixSeedScalar(Date.now(), Math.floor(Math.random() * 16777216) || 1, 3)) * 16777215;
 function normalizeElectricArcConfig(config) {
   const tier = config.quality ? ELECTRIC_ARC_TIERS[config.quality] : null;
   const segments = Math.round(config.segments ?? (tier ? tier.segments : 96));
   const chaosity = clamp(config.chaos ?? 0.35, 0, 1);
-  const start = toVec3(config.start, new THREE4.Vector3());
-  const end = toVec3(config.end, new THREE4.Vector3());
+  const start = toVec3(config.start, new THREE7.Vector3());
+  const end = toVec3(config.end, new THREE7.Vector3());
   const distance = Math.max(end.distanceTo(start), 1e-4);
-  const color = new THREE4.Color(config.color ?? 12255075);
-  const coreColor = new THREE4.Color(config.coreColor ?? 16776672);
+  const startOffset = toVec3(config.startOffset, new THREE7.Vector3());
+  const endOffset = toVec3(config.endOffset, new THREE7.Vector3());
+  const startRotation = toEuler(config.startRotation);
+  const endRotation = toEuler(config.endRotation);
+  const color = new THREE7.Color(config.color ?? 12255075);
+  const coreColor = new THREE7.Color(config.coreColor ?? 16776672);
   const seed =
     config.seed !== void 0 && Number.isFinite(config.seed)
       ? Math.trunc(config.seed) >>> 0
@@ -364,6 +380,10 @@ function normalizeElectricArcConfig(config) {
     intensity: config.intensity ?? 10,
     endpointPinning: clamp(config.endpointPinning ?? 0.72, 0, 4),
     rotationZ: Number.isFinite(config.rotationZ) ? Number(config.rotationZ) : 0,
+    startOffset,
+    endOffset,
+    startRotation,
+    endRotation,
     glow: {
       enabled: config.glow?.enabled ?? true,
       width: glowWidth,
@@ -434,9 +454,9 @@ function touchesStructuralField(config) {
 function mergeLiveConfig(target, patch) {
   if (patch.start !== void 0) toVec3(patch.start, target.start);
   if (patch.end !== void 0) toVec3(patch.end, target.end);
-  if (patch.color !== void 0) target.color = colorToNumber(new THREE4.Color(patch.color));
+  if (patch.color !== void 0) target.color = colorToNumber(new THREE7.Color(patch.color));
   if (patch.coreColor !== void 0)
-    target.coreColor = colorToNumber(new THREE4.Color(patch.coreColor));
+    target.coreColor = colorToNumber(new THREE7.Color(patch.coreColor));
   if (patch.thickness !== void 0) target.thickness = patch.thickness;
   if (patch.speed !== void 0) target.speed = patch.speed;
   if (patch.flickerHz !== void 0) target.flickerHz = patch.flickerHz;
@@ -446,6 +466,24 @@ function mergeLiveConfig(target, patch) {
     target.rotationZ = Number.isFinite(patch.rotationZ)
       ? Number(patch.rotationZ)
       : target.rotationZ;
+  if (patch.startOffset !== void 0) mergeVec3(patch.startOffset, target.startOffset);
+  if (patch.endOffset !== void 0) mergeVec3(patch.endOffset, target.endOffset);
+  if (patch.startRotation !== void 0) {
+    if (Number.isFinite(patch.startRotation.pitch))
+      target.startRotation.pitch = Number(patch.startRotation.pitch);
+    if (Number.isFinite(patch.startRotation.yaw))
+      target.startRotation.yaw = Number(patch.startRotation.yaw);
+    if (Number.isFinite(patch.startRotation.roll))
+      target.startRotation.roll = Number(patch.startRotation.roll);
+  }
+  if (patch.endRotation !== void 0) {
+    if (Number.isFinite(patch.endRotation.pitch))
+      target.endRotation.pitch = Number(patch.endRotation.pitch);
+    if (Number.isFinite(patch.endRotation.yaw))
+      target.endRotation.yaw = Number(patch.endRotation.yaw);
+    if (Number.isFinite(patch.endRotation.roll))
+      target.endRotation.roll = Number(patch.endRotation.roll);
+  }
   if (patch.glow?.intensity !== void 0) target.glow.intensity = patch.glow.intensity;
   if (patch.glow?.enabled !== void 0) target.glow.enabled = patch.glow.enabled;
   if (patch.glow?.width !== void 0) target.glow.width = Math.max(1, patch.glow.width);
@@ -526,10 +564,10 @@ var fillProfileTexture = (data, size, k, kind) => {
 function createProfileTexture(size, k, kind = 'gaussian') {
   const data = new Uint8Array(size * 4);
   fillProfileTexture(data, size, k, kind);
-  const tex = new THREE4.DataTexture(data, size, 1, THREE4.RGBAFormat);
+  const tex = new THREE7.DataTexture(data, size, 1, THREE7.RGBAFormat);
   tex.needsUpdate = true;
-  tex.minFilter = THREE4.LinearFilter;
-  tex.magFilter = THREE4.LinearFilter;
+  tex.minFilter = THREE7.LinearFilter;
+  tex.magFilter = THREE7.LinearFilter;
   return tex;
 }
 function writeProfileTexture(tex, size, k, kind) {
@@ -554,31 +592,31 @@ function createContactTexture(size = 64) {
       data[o + 3] = Math.round(a * 255);
     }
   }
-  const tex = new THREE4.DataTexture(data, size, size, THREE4.RGBAFormat);
+  const tex = new THREE7.DataTexture(data, size, size, THREE7.RGBAFormat);
   tex.needsUpdate = true;
-  tex.minFilter = THREE4.LinearFilter;
-  tex.magFilter = THREE4.LinearFilter;
+  tex.minFilter = THREE7.LinearFilter;
+  tex.magFilter = THREE7.LinearFilter;
   return tex;
 }
 function createContactSprites(radius, intensity, color, texture) {
-  const baseColor = new THREE4.Color(color);
+  const baseColor = new THREE7.Color(color);
   const scale = Math.max(radius * 2, 0.01);
   const mk = () => {
-    const mat = new THREE4.SpriteMaterial({
+    const mat = new THREE7.SpriteMaterial({
       map: texture,
       transparent: true,
-      blending: THREE4.AdditiveBlending,
+      blending: THREE7.AdditiveBlending,
       depthWrite: false,
       toneMapped: false,
     });
     mat.color.setRGB(baseColor.r * intensity, baseColor.g * intensity, baseColor.b * intensity);
-    const s = new THREE4.Sprite(mat);
+    const s = new THREE7.Sprite(mat);
     s.scale.set(scale, scale, 1);
     return s;
   };
   const start = mk();
   const end = mk();
-  const group = new THREE4.Group();
+  const group = new THREE7.Group();
   group.add(start);
   group.add(end);
   return {
@@ -598,7 +636,7 @@ function updateContactSprites(start, end, sx, sy, sz, ex, ey, ez, flicker, baseS
 }
 function buildRibbonGeometry(segments) {
   const vertexCount = segments * 2;
-  const geometry = new THREE4.BufferGeometry();
+  const geometry = new THREE7.BufferGeometry();
   const positionArray = new Float32Array(vertexCount * 3);
   const uvArray = new Float32Array(vertexCount * 2);
   const arcIndexArr = new Float32Array(vertexCount);
@@ -631,14 +669,14 @@ function buildRibbonGeometry(segments) {
     index[o + 4] = r1;
     index[o + 5] = l1;
   }
-  geometry.setAttribute('position', new THREE4.BufferAttribute(positionArray, 3));
-  geometry.setAttribute('uv', new THREE4.BufferAttribute(uvArray, 2));
-  const arcIndex = new THREE4.BufferAttribute(arcIndexArr, 1);
-  const arcSide = new THREE4.BufferAttribute(arcSideArr, 1);
+  geometry.setAttribute('position', new THREE7.BufferAttribute(positionArray, 3));
+  geometry.setAttribute('uv', new THREE7.BufferAttribute(uvArray, 2));
+  const arcIndex = new THREE7.BufferAttribute(arcIndexArr, 1);
+  const arcSide = new THREE7.BufferAttribute(arcSideArr, 1);
   geometry.setAttribute('arcIndex', arcIndex);
   geometry.setAttribute('arcSide', arcSide);
-  geometry.setIndex(new THREE4.BufferAttribute(index, 1));
-  geometry.boundingSphere = new THREE4.Sphere(new THREE4.Vector3(), 8);
+  geometry.setIndex(new THREE7.BufferAttribute(index, 1));
+  geometry.boundingSphere = new THREE7.Sphere(new THREE7.Vector3(), 8);
   return { geometry, positionArray, arcIndex, arcSide };
 }
 
@@ -764,17 +802,17 @@ var impulseNoise = (t, time, microFrequency, channel) =>
 var N_ARC = 0.68;
 var N_MICRO = 0.24;
 var N_IMPULSE = 0.08;
-var _dir = new THREE4.Vector3();
-var _helper = new THREE4.Vector3();
-var _basisU = new THREE4.Vector3();
-var _basisV = new THREE4.Vector3();
-var _tangent = new THREE4.Vector3();
-var _prev = new THREE4.Vector3();
-var _next = new THREE4.Vector3();
-var _camRight = new THREE4.Vector3();
+var _dir = new THREE7.Vector3();
+var _helper = new THREE7.Vector3();
+var _basisU = new THREE7.Vector3();
+var _basisV = new THREE7.Vector3();
+var _tangent = new THREE7.Vector3();
+var _prev = new THREE7.Vector3();
+var _next = new THREE7.Vector3();
+var _camRight = new THREE7.Vector3();
 function createElectricArcCpu(config) {
   const cfg = config;
-  const root = new THREE4.Group();
+  const root = new THREE7.Group();
   root.name = 'electric-arc-cpu';
   const seg = cfg.segments;
   const maxKnots = 21;
@@ -789,24 +827,24 @@ function createElectricArcCpu(config) {
   const innerMap = createProfileTexture(PROFILE_SIZE, 70, cfg.glow.profile);
   const haloMap = createProfileTexture(PROFILE_SIZE, 8, cfg.glow.profile);
   let lastProfile = cfg.glow.profile;
-  const arcColor = new THREE4.Color(cfg.color);
-  const coreColor = new THREE4.Color(cfg.coreColor);
+  const arcColor = new THREE7.Color(cfg.color);
+  const coreColor = new THREE7.Color(cfg.coreColor);
   const makeLayer = (segments, halfWidth, color, map) => {
     const geometry = buildRibbonGeometry(segments);
     const brightnessArr = new Float32Array(segments * 2 * 3);
-    geometry.geometry.setAttribute('color', new THREE4.BufferAttribute(brightnessArr, 3));
-    const material = new THREE4.MeshBasicMaterial({
+    geometry.geometry.setAttribute('color', new THREE7.BufferAttribute(brightnessArr, 3));
+    const material = new THREE7.MeshBasicMaterial({
       transparent: true,
-      blending: THREE4.AdditiveBlending,
+      blending: THREE7.AdditiveBlending,
       depthWrite: false,
       depthTest: true,
       toneMapped: false,
       vertexColors: true,
-      side: THREE4.DoubleSide,
+      side: THREE7.DoubleSide,
       map,
     });
     material.color.copy(color);
-    const mesh = new THREE4.Mesh(geometry.geometry, material);
+    const mesh = new THREE7.Mesh(geometry.geometry, material);
     mesh.frustumCulled = false;
     return { geometry, mesh, material, halfWidth };
   };
@@ -1168,13 +1206,13 @@ function createElectricArcCpu(config) {
   };
   refreshHooks();
   const updateLive = (patch) => {
-    const cc = new THREE4.Color(cfg.coreColor).multiplyScalar(cfg.intensity);
+    const cc = new THREE7.Color(cfg.coreColor).multiplyScalar(cfg.intensity);
     layers[0].material.color.copy(cc);
     layers[1].material.color
-      .copy(new THREE4.Color(cfg.color))
+      .copy(new THREE7.Color(cfg.color))
       .multiplyScalar(cfg.glow.intensity * 0.8);
     layers[2].material.color
-      .copy(new THREE4.Color(cfg.color))
+      .copy(new THREE7.Color(cfg.color))
       .multiplyScalar(cfg.glow.intensity * 0.4);
     layers[0].halfWidth = cfg.thickness * 0.5;
     layers[1].halfWidth = cfg.thickness * 0.5 * 2;
@@ -1186,7 +1224,7 @@ function createElectricArcCpu(config) {
       writeProfileTexture(haloMap, PROFILE_SIZE, 8, lastProfile);
     }
     if (contacts) {
-      const col = new THREE4.Color(cfg.color);
+      const col = new THREE7.Color(cfg.color);
       for (const m of contacts.materials) {
         m.color.setRGB(
           col.r * cfg.contact.intensity,
@@ -1238,16 +1276,16 @@ function getElectricArcGPURenderer() {
 }
 function createArcLighting(cfg) {
   if (!cfg.lighting.enabled) return null;
-  const color = new THREE4.Color(cfg.color);
+  const color = new THREE7.Color(cfg.color);
   const makeLight = (intensity) => {
-    const l = new THREE4.PointLight(16777215, intensity, cfg.lighting.distance, cfg.lighting.decay);
+    const l = new THREE7.PointLight(16777215, intensity, cfg.lighting.distance, cfg.lighting.decay);
     l.color.copy(color);
     return l;
   };
   const startL = makeLight(cfg.lighting.endpointIntensity);
   const midL = makeLight(cfg.lighting.midpointIntensity);
   const endL = makeLight(cfg.lighting.endpointIntensity);
-  const group = new THREE4.Group();
+  const group = new THREE7.Group();
   group.add(startL, midL, endL);
   let disposed = false;
   return {
@@ -1277,7 +1315,7 @@ function createArcLighting(cfg) {
 var _createParticleSystem = null;
 async function resolveParticleSystemFactory() {
   if (_createParticleSystem) return _createParticleSystem;
-  const mod = await import('./three-particles-I3AJE3KM.js');
+  const mod = await import('./three-particles-XJBIM5P3.js');
   _createParticleSystem = mod.createParticleSystem;
   return _createParticleSystem;
 }
@@ -1302,7 +1340,7 @@ var sparkConfig = (cfg) => {
     emission: { rateOverTime: s.rate },
     shape: { shape: 'SPHERE', sphere: { radius: 0.02, radiusThickness: 1 } },
     renderer: {
-      blending: THREE4.AdditiveBlending,
+      blending: THREE7.AdditiveBlending,
       transparent: true,
       depthTest: true,
       depthWrite: false,
@@ -1340,7 +1378,7 @@ var pushSparkLiveConfig = (systems, cfg) => {
 function createArcSparks(cfg) {
   if (!cfg.sparks.enabled || cfg.sparks.rate <= 0) return null;
   const base = sparkConfig(cfg);
-  const group = new THREE4.Group();
+  const group = new THREE7.Group();
   const systems = [];
   void resolveParticleSystemFactory().then((factory) => {
     if (!factory || systems.length > 0) return;
@@ -1351,9 +1389,9 @@ function createArcSparks(cfg) {
       systems.length = 0;
     }
   });
-  const posA = new THREE4.Vector3();
-  const posB = new THREE4.Vector3();
-  const posC = new THREE4.Vector3();
+  const posA = new THREE7.Vector3();
+  const posB = new THREE7.Vector3();
+  const posC = new THREE7.Vector3();
   let disposed = false;
   return {
     group,
@@ -1390,17 +1428,23 @@ function createArcSparks(cfg) {
 }
 
 // src/js/effects/electric-arc/electric-arc.ts
-var _zero = new THREE4.Vector3();
-var _tmp = new THREE4.Vector3();
+var _zero = new THREE7.Vector3();
+var _tmp = new THREE7.Vector3();
+var _helper2 = new THREE7.Vector3();
+var _local = new THREE7.Vector3();
+new THREE7.Vector3();
+var _euler = new THREE7.Euler(0, 0, 0, 'XYZ');
+var _rotM = new THREE7.Matrix4();
+var DEG2 = Math.PI / 180;
 var resolveEndpoint = (ref, out) => {
   if (!ref) return;
-  if (ref instanceof THREE4.Object3D) {
+  if (ref instanceof THREE7.Object3D) {
     ref.updateWorldMatrix(true, false);
     out.setFromMatrixPosition(ref.matrixWorld);
     return;
   }
   const maybe = ref;
-  if (maybe.object instanceof THREE4.Object3D) {
+  if (maybe.object instanceof THREE7.Object3D) {
     maybe.object.updateWorldMatrix(true, false);
     const { x = 0, y = 0, z = 0 } = maybe.offset ?? _zero;
     _tmp.set(x, y, z);
@@ -1418,7 +1462,7 @@ function createElectricArc(config) {
   const gpuRenderer2 = gpuFactory2 ? getElectricArcGPURenderer() : null;
   const resolved = resolveSimulationBackend(gpuRenderer2 ?? void 0, normalized.simulationBackend);
   const useGPU = resolved === 'GPU' /* GPU */ && !!gpuFactory2;
-  const instance = new THREE4.Group();
+  const instance = new THREE7.Group();
   instance.name = 'electric-arc';
   const createBackend = (cfg) => {
     if (useGPU && gpuFactory2) return gpuFactory2.create(cfg);
@@ -1433,8 +1477,21 @@ function createElectricArc(config) {
   let startDirect = normalized.start.clone();
   let endDirect = normalized.end.clone();
   let binding = null;
-  const scratchStart = new THREE4.Vector3();
-  const scratchEnd = new THREE4.Vector3();
+  const scratchStart = new THREE7.Vector3();
+  const scratchEnd = new THREE7.Vector3();
+  const _effStart = new THREE7.Vector3();
+  const _effEnd = new THREE7.Vector3();
+  const _chordN = new THREE7.Vector3();
+  const _chordU = new THREE7.Vector3();
+  const _chordV = new THREE7.Vector3();
+  const _startN = new THREE7.Vector3();
+  const _startU = new THREE7.Vector3();
+  const _startV = new THREE7.Vector3();
+  const _endN = new THREE7.Vector3();
+  const _endU = new THREE7.Vector3();
+  const _endV = new THREE7.Vector3();
+  let _startFrameSource = 'chord';
+  let _endFrameSource = 'chord';
   const resolveEndpoints = () => {
     if (binding) {
       resolveEndpoint(binding.start, scratchStart);
@@ -1445,6 +1502,84 @@ function createElectricArc(config) {
     }
   };
   resolveEndpoints();
+  const chordFrame = () => {
+    _chordN.subVectors(scratchEnd, scratchStart);
+    const len = _chordN.length();
+    if (len < 1e-4 || !Number.isFinite(len)) {
+      _chordN.set(0, 0, 1);
+      _chordU.set(1, 0, 0);
+      _chordV.set(0, 1, 0);
+      return;
+    }
+    _chordN.multiplyScalar(1 / len);
+    if (_chordN.y < 0.85 && _chordN.y > -0.85) _helper2.set(0, 1, 0);
+    else _helper2.set(1, 0, 0);
+    _chordU.crossVectors(_chordN, _helper2).normalize();
+    _chordV.crossVectors(_chordN, _chordU).normalize();
+  };
+  const objectFrame = (ref, n, u, v) => {
+    const obj = ref instanceof THREE7.Object3D ? ref : ref?.object;
+    if (!(obj instanceof THREE7.Object3D)) return false;
+    obj.updateWorldMatrix(true, false);
+    const m = obj.matrixWorld.elements;
+    u.set(m[0], m[1], m[2]);
+    v.set(m[4], m[5], m[6]);
+    n.set(m[8], m[9], m[10]);
+    if (u.lengthSq() < 1e-8 || v.lengthSq() < 1e-8 || n.lengthSq() < 1e-8) return false;
+    u.normalize();
+    v.normalize();
+    n.normalize();
+    return true;
+  };
+  const copyChordInto = (n, u, v) => {
+    n.copy(_chordN);
+    u.copy(_chordU);
+    v.copy(_chordV);
+  };
+  const applyEndpointTransform = (base, offset, rot, u, v, n, out) => {
+    out.copy(base);
+    if (offset.lengthSq() === 0) return;
+    _euler.set(rot.pitch * DEG2, rot.yaw * DEG2, rot.roll * DEG2, 'XYZ');
+    _rotM.makeRotationFromEuler(_euler);
+    _local.copy(offset).applyMatrix4(_rotM);
+    out.addScaledVector(u, _local.x);
+    out.addScaledVector(v, _local.y);
+    out.addScaledVector(n, _local.z);
+  };
+  const composeEndpoints = () => {
+    chordFrame();
+    _startFrameSource = objectFrame(
+      binding ? binding.start : startDirect,
+      _startN,
+      _startU,
+      _startV
+    )
+      ? 'object'
+      : (copyChordInto(_startN, _startU, _startV), 'chord');
+    _endFrameSource = objectFrame(binding ? binding.end : endDirect, _endN, _endU, _endV)
+      ? 'object'
+      : (copyChordInto(_endN, _endU, _endV), 'chord');
+    applyEndpointTransform(
+      scratchStart,
+      normalized.startOffset,
+      normalized.startRotation,
+      _startU,
+      _startV,
+      _startN,
+      _effStart
+    );
+    applyEndpointTransform(
+      scratchEnd,
+      normalized.endOffset,
+      normalized.endRotation,
+      _endU,
+      _endV,
+      _endN,
+      _effEnd
+    );
+    scratchStart.copy(_effStart);
+    scratchEnd.copy(_effEnd);
+  };
   let disposedFlag = false;
   const rebuild = () => {
     instance.remove(backend.root);
@@ -1455,6 +1590,7 @@ function createElectricArc(config) {
   const update = (cycle) => {
     if (disposedFlag) return;
     resolveEndpoints();
+    composeEndpoints();
     if (normalized.rotationZ) {
       rotateZ2(scratchStart, normalized.rotationZ);
       rotateZ2(scratchEnd, normalized.rotationZ);
@@ -1502,6 +1638,56 @@ function createElectricArc(config) {
     clearEndpointBinding() {
       binding = null;
     },
+    getRuntimeEndpoints() {
+      resolveEndpoints();
+      const baseStart = {
+        x: scratchStart.x,
+        y: scratchStart.y,
+        z: scratchStart.z,
+      };
+      const baseEnd = {
+        x: scratchEnd.x,
+        y: scratchEnd.y,
+        z: scratchEnd.z,
+      };
+      composeEndpoints();
+      const startFrame = {
+        tangent: { x: _startN.x, y: _startN.y, z: _startN.z },
+        normal: { x: _startU.x, y: _startU.y, z: _startU.z },
+        binormal: { x: _startV.x, y: _startV.y, z: _startV.z },
+        frameSource: _startFrameSource,
+      };
+      const endFrame = {
+        tangent: { x: _endN.x, y: _endN.y, z: _endN.z },
+        normal: { x: _endU.x, y: _endU.y, z: _endU.z },
+        binormal: { x: _endV.x, y: _endV.y, z: _endV.z },
+        frameSource: _endFrameSource,
+      };
+      if (normalized.rotationZ) {
+        rotateZ2(scratchStart, normalized.rotationZ);
+        rotateZ2(scratchEnd, normalized.rotationZ);
+      }
+      const sourceId =
+        (binding &&
+          (binding.start instanceof THREE7.Object3D
+            ? binding.start.name
+            : binding.start.object?.name)) ||
+        void 0;
+      return {
+        mode: binding ? 'bound' : 'standalone',
+        ...(sourceId ? { sourceId } : {}),
+        baseStart,
+        baseEnd,
+        effectiveStart: {
+          x: scratchStart.x,
+          y: scratchStart.y,
+          z: scratchStart.z,
+        },
+        effectiveEnd: { x: scratchEnd.x, y: scratchEnd.y, z: scratchEnd.z },
+        startFrame,
+        endFrame,
+      };
+    },
     get backend() {
       return backend.backend;
     },
@@ -1530,7 +1716,7 @@ function createElectricArc(config) {
     },
   };
 }
-var toPoint = (p) => new THREE4.Vector3(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+var toPoint = (p) => new THREE7.Vector3(p.x ?? 0, p.y ?? 0, p.z ?? 0);
 var CurveFunctionId = /* @__PURE__ */ ((CurveFunctionId3) => {
   CurveFunctionId3['BEZIER'] = 'BEZIER';
   CurveFunctionId3['LINEAR'] = 'LINEAR';
@@ -1601,8 +1787,8 @@ var curveFunctionIdMap = {
 };
 var getCurveFunction = (curveFunctionId) =>
   typeof curveFunctionId === 'function' ? curveFunctionId : curveFunctionIdMap[curveFunctionId];
-var noiseInput = new THREE4.Vector3(0, 0, 0);
-var orbitalEuler = new THREE4.Euler();
+var noiseInput = new THREE7.Vector3(0, 0, 0);
+var orbitalEuler = new THREE7.Euler();
 var applyModifiers = ({
   delta,
   generalData,
@@ -1758,9 +1944,9 @@ for (const [id, fn] of Object.entries(curveFunctionIdMap)) {
 }
 function serializeAny(value, key) {
   if (value === null || value === void 0) return value;
-  if (value instanceof THREE4.Vector3) return { x: value.x, y: value.y, z: value.z };
-  if (value instanceof THREE4.Vector2) return { x: value.x, y: value.y };
-  if (value instanceof THREE4.Texture) return void 0;
+  if (value instanceof THREE7.Vector3) return { x: value.x, y: value.y, z: value.z };
+  if (value instanceof THREE7.Vector2) return { x: value.x, y: value.y };
+  if (value instanceof THREE7.Texture) return void 0;
   if (typeof value === 'function') return void 0;
   if (Array.isArray(value)) return value.map((item) => serializeAny(item));
   if (typeof value === 'object') {
@@ -1831,12 +2017,12 @@ function deserializeCurveOrValue(value) {
 function deserializeVector3(raw) {
   if (!raw || typeof raw !== 'object') return void 0;
   const { x = 0, y = 0, z = 0 } = raw;
-  return new THREE4.Vector3(x, y, z);
+  return new THREE7.Vector3(x, y, z);
 }
 function deserializeVector2(raw) {
   if (!raw || typeof raw !== 'object') return void 0;
   const { x = 1, y = 1 } = raw;
-  return new THREE4.Vector2(x, y);
+  return new THREE7.Vector2(x, y);
 }
 function deserializeConfig(raw) {
   const config = {};
@@ -1882,8 +2068,8 @@ function deserializeConfig(raw) {
     const r = raw['renderer'];
     const blending =
       typeof r['blending'] === 'string'
-        ? (blendingMap[r['blending']] ?? THREE4.NormalBlending)
-        : (r['blending'] ?? THREE4.NormalBlending);
+        ? (blendingMap[r['blending']] ?? THREE7.NormalBlending)
+        : (r['blending'] ?? THREE7.NormalBlending);
     config.renderer = { ...r, blending };
   }
   if (raw['velocityOverLifetime'] && typeof raw['velocityOverLifetime'] === 'object') {
