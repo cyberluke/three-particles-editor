@@ -100,8 +100,12 @@ export const createGeneralEntries = ({
     .onChange(recreateParticleSystem)
     .listen();
 
+  // Solver-aware capacity range: the FLUID dambreak lattices seed up to
+  // 4 328 particles (MLS-MPM) / ~400 (SPH), so the generic 1000 cap would
+  // clamp the shipped presets. Ordinary particle effects keep 1000.
+  const isFluidConfig = particleSystemConfig.renderer?.rendererType === 'FLUID';
   const maxParticlesController = folder
-    .add(particleSystemConfig, 'maxParticles', 1.0, 1000, 1.0)
+    .add(particleSystemConfig, 'maxParticles', 1.0, isFluidConfig ? 5000 : 1000, 1.0)
     .onChange(forceRecreate)
     .listen();
 

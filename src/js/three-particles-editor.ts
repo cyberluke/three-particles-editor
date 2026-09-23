@@ -448,7 +448,7 @@ const animate = (): void => {
   const activeConfig = getActiveConfig();
   const softParticlesEnabled = !!activeConfig?.renderer?.softParticles?.enabled;
   const computeNode = particleSystem?.computeNode ?? null;
-  updateWorld(softParticlesEnabled, particleSystemContainer, computeNode);
+  updateWorld(softParticlesEnabled, particleSystemContainer, computeNode, particleSystem);
   if (++diagnosticFrames === 120) {
     console.log(
       '[WebGPU proof] compute dispatches (gen #' + diagnosticGeneration + '):',

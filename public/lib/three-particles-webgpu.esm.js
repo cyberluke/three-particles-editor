@@ -2691,22 +2691,35 @@ var initMLSMPMDambreak = (
   boxSize,
   capacity,
   spacing = MLS_MPM_PARTICLE_SPACING,
-  random = Math.random
+  random = Math.random,
+  seedSphere
 ) => {
   const slots = Math.max(1, Math.floor(capacity));
   const position = new Float32Array(slots * 4);
   const velocity = new Float32Array(slots * 4);
   const coefficients = new Float32Array(slots * MLS_MPM_C_WORDS * 4);
   const yLimit = boxSize[1] * 0.8;
+  const r2 = seedSphere ? seedSphere.radius * seedSphere.radius : 0;
   let count = 0;
+  const inSphere = (px, py, pz) => {
+    if (!seedSphere) return true;
+    const dx = px - seedSphere.center[0];
+    const dy = py - seedSphere.center[1];
+    const dz = pz - seedSphere.center[2];
+    return dx * dx + dy * dy + dz * dz <= r2;
+  };
   for (let y = 0; y < yLimit && count < slots; y += spacing) {
     for (let x = 3; x < boxSize[0] - 4 && count < slots; x += spacing) {
       for (let z = 3; z < boxSize[2] / 2 && count < slots; z += spacing) {
         const jitter = 2 * random();
+        const px = x + jitter;
+        const py = y + jitter;
+        const pz = z + jitter;
+        if (!inSphere(px, py, pz)) continue;
         const base = count * 4;
-        position[base] = x + jitter;
-        position[base + 1] = y + jitter;
-        position[base + 2] = z + jitter;
+        position[base] = px;
+        position[base + 1] = py;
+        position[base + 2] = pz;
         velocity[base] = 0;
         velocity[base + 1] = 0;
         velocity[base + 2] = 0;
@@ -2720,8 +2733,8 @@ var initMLSMPMDambreak = (
   }
   return { count, position, velocity, coefficients };
 };
-var countMLSMPMDambreak = (boxSize, capacity, spacing = MLS_MPM_PARTICLE_SPACING) =>
-  initMLSMPMDambreak(boxSize, capacity, spacing, () => 0).count;
+var countMLSMPMDambreak = (boxSize, capacity, spacing = MLS_MPM_PARTICLE_SPACING, seedSphere) =>
+  initMLSMPMDambreak(boxSize, capacity, spacing, () => 0, seedSphere).count;
 function createMLSMPMBuffers(maxParticles, gridCount, shared) {
   const particles = Math.max(1, Math.floor(maxParticles));
   const cells = Math.max(1, Math.floor(gridCount));
@@ -2978,6 +2991,25 @@ var createG2PKernel = (ctx) =>
       If(ex.z.greaterThan(ctx.rz.sub(maxOffset)), () => {
         newVel.z.addAssign(ctx.wallStiffness.mul(ctx.rz.sub(maxOffset).sub(ex.z)));
       });
+      If(ctx.uSphere.w.greaterThan(float(0)), () => {
+        const rel = pos.sub(ctx.uSphere.xyz);
+        const dist = length(rel);
+        If(dist.greaterThan(ctx.uSphere.w), () => {
+          const n = rel.div(dist);
+          pos.assign(ctx.uSphere.xyz.add(n.mul(ctx.uSphere.w)));
+          const vn = dot(newVel, n);
+          newVel.assign(newVel.sub(n.mul(vn.mul(float(2)))));
+        });
+      });
+      If(ctx.uPointerPos.w.greaterThan(float(0)), () => {
+        const rel = pos.sub(ctx.uPointerPos.xyz);
+        const dist = length(rel);
+        If(dist.lessThan(ctx.uPointerPos.w), () => {
+          const f = float(1).sub(dist.div(ctx.uPointerPos.w));
+          newVel.addAssign(ctx.uPointerVel.mul(f));
+        });
+      });
+      ctx.sPos.element(i).assign(vec4(pos, float(0)));
       ctx.sVel.element(i).assign(vec4(newVel, float(0)));
     });
   });
@@ -2993,6 +3025,9 @@ function createMLSMPMPipeline(maxParticles, params, realBox, shared) {
   const box = realBox ?? params.boxSize;
   const buffers = createMLSMPMBuffers(count, gridCount, shared);
   const uBoxWidthRatio = uniform(params.boxSize[2] > 0 ? box[2] / params.boxSize[2] : 1);
+  const uSphere = uniform(new Vector4(0, 0, 0, 0));
+  const uPointerPos = uniform(new Vector4(0, 0, 0, 0));
+  const uPointerVel = uniform(new Vector4(0, 0, 0, 0));
   const sPos = storage(buffers.position, 'vec4', count);
   const sVel = storage(buffers.velocity, 'vec4', count);
   const sC = storage(buffers.coefficients, 'vec4', count * MLS_MPM_C_WORDS);
@@ -3018,6 +3053,9 @@ function createMLSMPMPipeline(maxParticles, params, realBox, shared) {
     ry: float(box[1]),
     // Animated `z` extent = init extent * `uBoxWidthRatio` (`changeBoxSize`).
     rz: float(params.boxSize[2]).mul(uBoxWidthRatio),
+    uSphere,
+    uPointerPos,
+    uPointerVel,
   };
   const clearGrid = createClearGridKernel(ctx);
   const p2g1 = createP2G1Kernel(ctx);
@@ -3046,7 +3084,12 @@ function createMLSMPMPipeline(maxParticles, params, realBox, shared) {
     buffers,
     gridCount,
     numParticles: count,
-    uniforms: { boxWidthRatio: uBoxWidthRatio },
+    uniforms: {
+      boxWidthRatio: uBoxWidthRatio,
+      sphereDomain: uSphere,
+      pointerPos: uPointerPos,
+      pointerVel: uPointerVel,
+    },
   };
 }
 var SPH_WORKGROUP_SIZE = 64;
@@ -3103,7 +3146,8 @@ var initSPHDambreak = (
   halfBoxSize,
   capacity,
   kernelRadius = SPH_DEFAULT_KERNEL_RADIUS,
-  random = Math.random
+  random = Math.random,
+  seedSphere
 ) => {
   const slots = Math.max(1, Math.floor(capacity));
   const position = new Float32Array(slots * 4);
@@ -3113,23 +3157,35 @@ var initSPHDambreak = (
   const mx = SPH_LATTICE_MARGIN * halfBoxSize[0];
   const my = SPH_LATTICE_MARGIN * halfBoxSize[1];
   const mz = SPH_LATTICE_MARGIN * halfBoxSize[2];
+  const r2 = seedSphere ? seedSphere.radius * seedSphere.radius : 0;
   let count = 0;
+  const inSphere = (px, py, pz) => {
+    if (!seedSphere) return true;
+    const dx = px - seedSphere.center[0];
+    const dy = py - seedSphere.center[1];
+    const dz = pz - seedSphere.center[2];
+    return dx * dx + dy * dy + dz * dz <= r2;
+  };
   for (let y = -my; count < slots; y += step2) {
     for (let x = -mx; x < mx && count < slots; x += step2) {
       for (let z = -mz; z < 0 && count < slots; z += step2) {
         const jitter = 1e-3 * random();
+        const px = x + jitter;
+        const py = y + jitter;
+        const pz = z + jitter;
+        if (!inSphere(px, py, pz)) continue;
         const base = count * 4;
-        position[base] = x + jitter;
-        position[base + 1] = y + jitter;
-        position[base + 2] = z + jitter;
+        position[base] = px;
+        position[base + 1] = py;
+        position[base + 2] = pz;
         count++;
       }
     }
   }
   return { count, position, velocity, forceDensity };
 };
-var countSPHDambreak = (halfBoxSize, capacity, kernelRadius) =>
-  initSPHDambreak(halfBoxSize, capacity, kernelRadius, () => 0).count;
+var countSPHDambreak = (halfBoxSize, capacity, kernelRadius, seedSphere) =>
+  initSPHDambreak(halfBoxSize, capacity, kernelRadius, () => 0, seedSphere).count;
 function createSPHBuffers(maxParticles, gridCount, shared) {
   const particles = Math.max(1, Math.floor(maxParticles));
   const cells = Math.max(1, Math.floor(gridCount));
@@ -3452,19 +3508,49 @@ var createIntegrateKernel = (ctx) =>
           float(0)
         ).toVar();
         const wall = float(SPH_WALL_STIFFNESS);
-        signedWall(accel.x, wall, ctx.halfX.sub(posVec.x));
-        signedWall(accel.x, wall, ctx.halfX.add(posVec.x));
-        signedWall(accel.y, wall, ctx.halfY.sub(posVec.y));
-        signedWall(accel.y, wall, ctx.halfY.add(posVec.y));
-        signedWall(accel.z, wall, ctx.halfZ.sub(posVec.z));
-        signedWall(accel.z, wall, ctx.halfZ.add(posVec.z));
+        If(ctx.uSphere.w.greaterThan(float(0)), () => {
+          const rel = posVec.xyz.sub(ctx.uSphere.xyz);
+          const d = min(ctx.uSphere.w.sub(length(rel)), float(0));
+          const n = normalize(rel);
+          accel.x.addAssign(wall.mul(d).mul(n.x));
+          accel.y.addAssign(wall.mul(d).mul(n.y));
+          accel.z.addAssign(wall.mul(d).mul(n.z));
+        });
+        If(ctx.uSphere.w.equal(float(0)), () => {
+          signedWall(accel.x, wall, ctx.halfX.sub(posVec.x));
+          signedWall(accel.x, wall, ctx.halfX.add(posVec.x));
+          signedWall(accel.y, wall, ctx.halfY.sub(posVec.y));
+          signedWall(accel.y, wall, ctx.halfY.add(posVec.y));
+          signedWall(accel.z, wall, ctx.halfZ.sub(posVec.z));
+          signedWall(accel.z, wall, ctx.halfZ.add(posVec.z));
+        });
         const velVec = ctx.sVel.element(i).toVar();
+        If(ctx.uPointerPos.w.greaterThan(float(0)), () => {
+          const rel = posVec.xyz.sub(ctx.uPointerPos.xyz);
+          const d = length(rel);
+          If(d.lessThan(ctx.uPointerPos.w), () => {
+            const f = float(1).sub(d.div(ctx.uPointerPos.w));
+            velVec.x.addAssign(ctx.uPointerVel.x.mul(f));
+            velVec.y.addAssign(ctx.uPointerVel.y.mul(f));
+            velVec.z.addAssign(ctx.uPointerVel.z.mul(f));
+          });
+        });
         velVec.x.addAssign(accel.x.mul(ctx.dt));
         velVec.y.addAssign(accel.y.mul(ctx.dt));
         velVec.z.addAssign(accel.z.mul(ctx.dt));
         posVec.x.addAssign(velVec.x.mul(ctx.dt));
         posVec.y.addAssign(velVec.y.mul(ctx.dt));
         posVec.z.addAssign(velVec.z.mul(ctx.dt));
+        If(ctx.uSphere.w.greaterThan(float(0)), () => {
+          const rel = posVec.xyz.sub(ctx.uSphere.xyz);
+          const d = length(rel);
+          If(d.greaterThan(ctx.uSphere.w), () => {
+            const n = rel.div(d);
+            posVec.x.assign(ctx.uSphere.x.add(n.mul(ctx.uSphere.w).x));
+            posVec.y.assign(ctx.uSphere.y.add(n.mul(ctx.uSphere.w).y));
+            posVec.z.assign(ctx.uSphere.z.add(n.mul(ctx.uSphere.w).z));
+          });
+        });
         ctx.sVel.element(i).assign(velVec);
         ctx.sPos.element(i).assign(posVec);
       });
@@ -3488,6 +3574,9 @@ function createSPHPipeline(maxParticles, params, realHalfBox, shared) {
   const box = realHalfBox ?? params.realHalfBox;
   const buffers = createSPHBuffers(count, gridCount, shared);
   const uBoxWidthRatio = uniform(params.halfBoxSize[2] > 0 ? box[2] / params.halfBoxSize[2] : 1);
+  const uSphere = uniform(new Vector4(0, 0, 0, 0));
+  const uPointerPos = uniform(new Vector4(0, 0, 0, 0));
+  const uPointerVel = uniform(new Vector4(0, 0, 0, 0));
   const sPos = storage(buffers.position, 'vec4', count);
   const sVel = storage(buffers.velocity, 'vec4', count);
   const sForce = storage(buffers.forceDensity, 'vec4', count);
@@ -3522,6 +3611,9 @@ function createSPHPipeline(maxParticles, params, realHalfBox, shared) {
     sBlockOffsets,
     cellSizeInv: float(1 / params.cellSize),
     offset: float(params.offset),
+    uSphere,
+    uPointerPos,
+    uPointerVel,
     // One half-max set feeds both the lattice coordinates and the walls
     // (`xHalfMax` / `yHalfMax` / `zHalfMax` of the reference params block);
     // the `z` axis carries the animated `boxWidthRatio` squeeze.
@@ -3609,7 +3701,12 @@ function createSPHPipeline(maxParticles, params, realHalfBox, shared) {
     buffers,
     gridCount,
     numParticles: count,
-    uniforms: { boxWidthRatio: uBoxWidthRatio },
+    uniforms: {
+      boxWidthRatio: uBoxWidthRatio,
+      sphereDomain: uSphere,
+      pointerPos: uPointerPos,
+      pointerVel: uPointerVel,
+    },
   };
 }
 
@@ -4613,6 +4710,14 @@ function createFluidSimPipeline(solver, shared, maxParticles, normalizedConfig) 
     position: shared.position,
     velocity: shared.velocity,
   };
+  const domain = renderer.fluid?.domain;
+  const seedSphere =
+    domain && domain.kind === 'sphere' && domain.radius > 0
+      ? {
+          center: domain.center ?? [0, 0, 0],
+          radius: domain.radius,
+        }
+      : void 0;
   if (isSPH) {
     const cfg2 = renderer.sph;
     const halfBox = [...(cfg2?.halfBoxSize ?? SPH_DEFAULTS.halfBoxSize)];
@@ -4620,7 +4725,13 @@ function createFluidSimPipeline(solver, shared, maxParticles, normalizedConfig) 
       typeof cfg2?.boxWidthRatio === 'number' && Number.isFinite(cfg2.boxWidthRatio)
         ? cfg2.boxWidthRatio
         : 1;
-    const state2 = initSPHDambreak(halfBox, Math.max(1, maxParticles));
+    const state2 = initSPHDambreak(
+      halfBox,
+      Math.max(1, maxParticles),
+      void 0,
+      Math.random,
+      seedSphere
+    );
     shared.position.array.set(state2.position);
     shared.velocity.array.set(state2.velocity);
     const sph = createSPHPipeline(
@@ -4645,7 +4756,7 @@ function createFluidSimPipeline(solver, shared, maxParticles, normalizedConfig) 
     typeof cfg?.boxWidthRatio === 'number' && Number.isFinite(cfg.boxWidthRatio)
       ? cfg.boxWidthRatio
       : 1;
-  const state = initMLSMPMDambreak(box, Math.max(1, maxParticles));
+  const state = initMLSMPMDambreak(box, Math.max(1, maxParticles), void 0, Math.random, seedSphere);
   shared.position.array.set(state.position);
   shared.velocity.array.set(state.velocity);
   const mls = createMLSMPMPipeline(

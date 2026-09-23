@@ -9,7 +9,7 @@ import {
   S_COLOR_B,
   S_ROTATION,
   SCALAR_STRIDE,
-} from './chunk-RVTP4DNX.js';
+} from './chunk-FK3Z4JZ7.js';
 export {
   CollisionPlaneMode,
   EmitFrom,
@@ -63,12 +63,13 @@ export {
   rgbSRGBToLinear,
   sRGBToLinear,
   updateParticleSystems,
-} from './chunk-RVTP4DNX.js';
+  writeFluidDomainUniforms,
+} from './chunk-FK3Z4JZ7.js';
 import * as THREE7 from 'three';
 import Easing from 'easing-functions';
 
 // src/js/effects/three-particles/version.ts
-var REVISION = '4.1.2';
+var REVISION = '4.1.3';
 if (typeof globalThis !== 'undefined') {
   const g = globalThis;
   if (g.__THREE_PARTICLES__ && g.__THREE_PARTICLES__ !== REVISION) {
@@ -1315,7 +1316,7 @@ function createArcLighting(cfg) {
 var _createParticleSystem = null;
 async function resolveParticleSystemFactory() {
   if (_createParticleSystem) return _createParticleSystem;
-  const mod = await import('./three-particles-OPLKH5F3.js');
+  const mod = await import('./three-particles-DOPVAT6O.js');
   _createParticleSystem = mod.createParticleSystem;
   return _createParticleSystem;
 }

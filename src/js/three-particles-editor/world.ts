@@ -107,8 +107,19 @@ const onWindowResize = (): void => {
  * The fluid (`RendererType.FLUID`) screen-space chain builds its `pass()` nodes
  * before this module owns a camera, so the pass nodes are bound lazily here —
  * every pass renders the same perspective camera as the main scene.
+ *
+ * Prefers the engine-owned public `bindCamera()` handle; the private
+ * `__fluidPassNodes` material walk is kept only as a compatibility shim for
+ * older engine mirrors.
  */
-const bindFluidPassCameras = (container?: THREE.Object3D): void => {
+const bindFluidPassCameras = (
+  container?: THREE.Object3D,
+  effect?: { bindCamera?: (cam: unknown) => void } | null
+): void => {
+  if (effect?.bindCamera) {
+    effect.bindCamera(camera);
+    return;
+  }
   if (!container) return;
   container.traverse((object) => {
     const material = (object as THREE.Mesh).material as
@@ -124,9 +135,10 @@ const bindFluidPassCameras = (container?: THREE.Object3D): void => {
 export const updateWorld = (
   softParticlesEnabled = false,
   particleContainer?: THREE.Object3D,
-  computeNode?: unknown
+  computeNode?: unknown,
+  effect?: { bindCamera?: (cam: unknown) => void } | null
 ): void => {
-  bindFluidPassCameras(particleContainer);
+  bindFluidPassCameras(particleContainer, effect);
   // Dispatch GPU compute for WebGPU particle simulation. The three-particles
   // GPU-only kernel returns an ordered [emitNode, simNode] pair; Three.js
   // natively expands `Node[]` into the same `computeList` order as variadic

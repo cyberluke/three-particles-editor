@@ -341,9 +341,21 @@ export const createRendererEntries = ({
       fluidFolder.close();
     }
 
+    // The solver refreshes a few host-written scalars from `normalizedConfig`
+    // every frame (`boxWidthRatio`, spherical `domain`, `pointer`). Those go
+    // through the live `updateConfig` path (key `renderer`) without a pool
+    // rebuild; every other edit stays on the full recreate path.
+    const liveScalarUpdate = (): void =>
+      (
+        recreateParticleSystem as unknown as (
+          markAsDirty?: boolean,
+          liveUpdateKeys?: string[]
+        ) => void
+      )(true, ['renderer']);
+
     // MLS-MPM solver (port of `matsuoka-601/webgpu-ocean`, `mls-mpm/`). The
     // 2 sub-steps / `64^3` lattice kernels are rebuilt with the pool, so every
-    // edit goes through `recreateParticleSystem`.
+    // edit goes through `recreateParticleSystem` — except the live scalars.
     const fluidSolverName = String(particleSystemConfig.renderer.fluid?.solver ?? 'MLS-MPM')
       .trim()
       .toUpperCase();
@@ -403,8 +415,8 @@ export const createRendererEntries = ({
         .listen();
       mlsFolder
         .add(mls, 'boxWidthRatio', 0.1, 3, 0.001)
-        .name('Box z ratio')
-        .onChange(recreateParticleSystem)
+        .name('Box z ratio (live)')
+        .onChange(liveScalarUpdate)
         .listen();
       mlsFolder
         .add(mls, 'cellSize', 0.5, 4, 0.5)
@@ -505,8 +517,8 @@ export const createRendererEntries = ({
         .listen();
       sphFolder
         .add(sph, 'boxWidthRatio', 0.1, 3, 0.001)
-        .name('Box z ratio')
-        .onChange(recreateParticleSystem)
+        .name('Box z ratio (live)')
+        .onChange(liveScalarUpdate)
         .listen();
       // Half-extents of the simulation box — the SPH dambreak extent.
       ['X', 'Y', 'Z'].forEach((axisLabel, idx) => {

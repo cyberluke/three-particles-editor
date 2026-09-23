@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { examples } from './examples-data.js';
 import {
   initVersionSwitcher,
@@ -179,6 +180,178 @@ function isElectricArcExample(example) {
   return example.kind === 'electric-arc';
 }
 
+function isFluidExample(example) {
+  return example?.demo?.kind === 'fluid' || example?.config?.renderer?.rendererType === 'FLUID';
+}
+
+/** Reference orbit of the WaterBall / webgpu-ocean `Camera.reset()` (`Pi/4`, `-Pi/12`). */
+const FLUID_ORBIT = { xTheta: Math.PI / 4, yTheta: -Math.PI / 12 };
+
+/**
+ * Frames the demo camera for the active solver domain from the ACTUAL box
+ * extents (MLS-MPM `boxSize` or SPH `halfBoxSize`), mirroring the editor's
+ * `frameFluidCameraFromConfig()`. The desktop constant 70 only fits the
+ * [40,30,60] lattice; other boxes scale with their largest extent.
+ */
+function frameFluidCameraFromConfig(demo) {
+  const rendererCfg = demo.data.config?.renderer ?? {};
+  const isSPH =
+    String(rendererCfg.fluid?.solver ?? '')
+      .trim()
+      .toUpperCase() === 'SPH';
+  let distance;
+  let target;
+  if (isSPH) {
+    const hb = rendererCfg.sph?.halfBoxSize ?? [1, 2, 1];
+    distance = Math.max(1.5, hb[1] * 1.6);
+    target = [0, -hb[1] * 0.95, 0];
+  } else {
+    const box = rendererCfg.mlsMpm?.boxSize ?? [40, 30, 60];
+    distance = Math.max(box[0], box[1], box[2]) * 1.15;
+    target = [box[0] / 2, box[1] / 4, box[2] / 2];
+  }
+  const { xTheta, yTheta } = FLUID_ORBIT;
+  const flat = distance * Math.cos(yTheta);
+  demo.camera.near = Math.max(0.05, distance / 100);
+  demo.camera.far = distance * 10;
+  demo.camera.position.set(
+    target[0] + flat * Math.sin(xTheta),
+    target[1] - distance * Math.sin(yTheta),
+    target[2] + flat * Math.cos(xTheta)
+  );
+  demo.camera.lookAt(target[0], target[1], target[2]);
+  demo.camera.updateProjectionMatrix();
+  demo.fluidTarget = target;
+  if (demo.orbitControls) {
+    demo.orbitControls.target.set(target[0], target[1], target[2]);
+    demo.orbitControls.minDistance = distance * 0.4;
+    demo.orbitControls.maxDistance = distance * 2.5;
+    demo.orbitControls.update();
+  }
+}
+
+/**
+ * Fluid demo wiring: bind the live camera to the engine screen-space pass
+ * chain (public `bindCamera`, with the private `__fluidPassNodes` walk only
+ * as an older-mirror shim), attach OrbitControls and the pointer-force input.
+ */
+function setupFluidDemo(demo) {
+  const effect = demo.effect;
+  if (!effect) return;
+  if (typeof effect.bindCamera === 'function') {
+    effect.bindCamera(demo.camera);
+  } else {
+    const nodes = effect.instance?.material?.__fluidPassNodes;
+    if (Array.isArray(nodes)) {
+      for (const node of nodes) {
+        if (node && node.camera == null) node.camera = demo.camera;
+      }
+    }
+  }
+  demo.orbitControls = new OrbitControls(demo.camera, demo.renderer.domElement);
+  demo.orbitControls.enableDamping = true;
+  demo.orbitControls.enablePan = false;
+  frameFluidCameraFromConfig(demo);
+  const canvas = demo.renderer.domElement;
+  demo.pointer = {
+    nx: 0,
+    ny: 0,
+    px: 0,
+    py: 0,
+    pz: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    init: false,
+    has: false,
+  };
+  demo.pointerHandler = (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    demo.pointer.nx = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    demo.pointer.ny = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
+    demo.pointer.has = true;
+  };
+  canvas.addEventListener('pointermove', demo.pointerHandler);
+  const telemetry = effect.getFluidTelemetry?.();
+  if (telemetry) {
+    console.log(
+      `[fluid] solver=${telemetry.solver} seeded=${telemetry.filledParticles}/${telemetry.maxParticles} ` +
+        `lattice=${telemetry.gridCount} computePasses=${telemetry.passCount} ` +
+        `renderPasses=${telemetry.screenSpacePasses} boxZRatio=${telemetry.boxWidthRatio}`
+    );
+    console.log('[fluid] compute pass order:', telemetry.passNames.join(' -> '));
+    demo.telemetry = telemetry;
+  }
+}
+
+const _fluidDir = new THREE.Vector3();
+const _fluidTargetView = new THREE.Vector3();
+const _fluidDirView = new THREE.Vector3();
+
+/** Per-frame fluid input: orbit damping + linear-falloff pointer force. */
+function stepFluidFrame(demo) {
+  const effect = demo.effect;
+  if (!effect || !isFluidExample(demo.data)) return;
+  if (demo.orbitControls) demo.orbitControls.update();
+  const fluid = demo.data.config?.renderer?.fluid;
+  const p = demo.pointer;
+  if (fluid?.pointer && p?.has) {
+    _fluidDir.set(p.nx, p.ny, 0.5).unproject(demo.camera);
+    _fluidDir.sub(demo.camera.position).normalize();
+    const t = demo.fluidTarget ?? [0, 0, 0];
+    _fluidTargetView.set(t[0], t[1], t[2]).applyMatrix4(demo.camera.matrixWorldInverse);
+    _fluidDirView.copy(_fluidDir).applyMatrix4(demo.camera.matrixWorldInverse);
+    const dist = _fluidTargetView.z / (_fluidDirView.z || -1);
+    const wx = demo.camera.position.x + _fluidDir.x * dist;
+    const wy = demo.camera.position.y + _fluidDir.y * dist;
+    const wz = demo.camera.position.z + _fluidDir.z * dist;
+    const nowT = performance.now();
+    const dtS = p.lastT ? Math.max(0.001, (nowT - p.lastT) / 1000) : 1 / 60;
+    p.lastT = nowT;
+    if (p.init) {
+      p.vx = (wx - p.px) / dtS;
+      p.vy = (wy - p.py) / dtS;
+      p.vz = (wz - p.pz) / dtS;
+    }
+    p.px = wx;
+    p.py = wy;
+    p.pz = wz;
+    p.init = true;
+    const radius =
+      typeof fluid.pointer.radius === 'number' && fluid.pointer.radius > 0
+        ? fluid.pointer.radius
+        : 4;
+    effect.updateConfig({
+      renderer: {
+        fluid: {
+          pointer: {
+            position: [wx, wy, wz],
+            velocity: [p.vx, p.vy, p.vz],
+            radius,
+          },
+        },
+      },
+    });
+  }
+}
+
+/** One-shot per-demo fatal surface: real error text, not a blank canvas. */
+function showDemoError(target, err) {
+  const msg = `init failed: ${err?.message ?? String(err)} | engine: local | backend: ${
+    webgpuAvailable ? 'WebGPU' : 'no WebGPU'
+  }`;
+  console.error('[demo]', msg);
+  if (target && typeof target.querySelector === 'function') {
+    const stats = target.querySelector('.card-stats');
+    if (stats) stats.style.display = 'flex';
+    const fps = target.querySelector('.card-fps');
+    if (fps) fps.textContent = msg;
+  } else {
+    const fps = document.getElementById('expand-fps');
+    if (fps) fps.textContent = msg;
+  }
+}
+
 /**
  * Prepare an ElectricArc section config (§40): pass-through + backend choice.
  * The engine maps AUTO/GPU/CPU with GPU-compute-when-available semantics.
@@ -332,7 +505,7 @@ class LiveDemo {
     this.pausedDuration = 0;
     this.pauseStartTime = 0;
     this.disposed = false;
-    this.init();
+    this.init().catch((e) => showDemoError(this.container, e));
   }
 
   async init() {
@@ -367,6 +540,10 @@ class LiveDemo {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = 1.05;
+    } else if (isFluidExample(this.data)) {
+      // FLUID solver + screen-space chain emits linear values like the arc
+      // demo: SRGBColorSpace output, no extra tone map.
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     } else {
       // Particle shaders output raw sRGB values (textures are not linearised).
       // Disable the output pass sRGB conversion to avoid double-gamma encoding.
@@ -427,6 +604,12 @@ class LiveDemo {
       this.scene.add(this.effect.instance);
     }
 
+    // FLUID: bind the demo camera into the engine pass chain, orbit + pointer
+    // input, and sRGB output matching the engine shading convention.
+    if (isFluidExample(this.data)) {
+      setupFluidDemo(this);
+    }
+
     // RenderPipeline only for cards that declare postprocessing metadata
     this.renderPipeline = createRenderPipelineFor(
       this.renderer,
@@ -439,11 +622,15 @@ class LiveDemo {
     const backendLabel = this.container.querySelector('.card-backend-label');
     if (backendLabel) {
       const actual =
-        this.effect?.backend ?? (this.computeEnabled && this.backend === 'GPU' ? 'GPU' : 'CPU');
+        this.effect?.backend ??
+        (this.effect?.computeNode || (this.computeEnabled && this.backend === 'GPU')
+          ? 'GPU'
+          : 'CPU');
       backendLabel.textContent = actual;
       backendLabel.style.color = actual === 'GPU' ? '#66bb6a' : '#4fc3f7';
     }
 
+    if (this.disposed) return;
     this.animate();
   }
 
@@ -478,6 +665,8 @@ class LiveDemo {
       this.renderer.setRenderTarget(null);
       this.effect.instance.visible = true;
     }
+
+    stepFluidFrame(this);
 
     renderDemoView(this);
 
@@ -516,6 +705,10 @@ class LiveDemo {
   dispose() {
     this.disposed = true;
     if (this.animationId) cancelAnimationFrame(this.animationId);
+    if (this.orbitControls) {
+      this.orbitControls.dispose();
+      this.orbitControls = null;
+    }
     if (this.effect) this.effect.dispose();
     this.effect = null;
     if (this.renderPipeline) this.renderPipeline.dispose?.();
@@ -524,6 +717,9 @@ class LiveDemo {
       this.softParticlesSetup.renderTarget.dispose();
     }
     if (this.renderer) {
+      if (this.pointerHandler) {
+        this.renderer.domElement.removeEventListener('pointermove', this.pointerHandler);
+      }
       this.renderer.dispose();
     }
 
@@ -610,7 +806,7 @@ class ExpandedDemo {
     this.pausedDuration = 0;
     this.pauseStartTime = 0;
     this.disposed = false;
-    this.init();
+    this.init().catch((e) => showDemoError(null, e));
   }
 
   async init() {
@@ -633,6 +829,8 @@ class ExpandedDemo {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = 1.05;
+    } else if (isFluidExample(this.data)) {
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     } else {
       this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     }
@@ -687,6 +885,12 @@ class ExpandedDemo {
       this.scene.add(this.effect.instance);
     }
 
+    // FLUID: bind the demo camera into the engine pass chain, orbit + pointer
+    // input (public `bindCamera`, with the material walk as a legacy shim).
+    if (isFluidExample(this.data)) {
+      setupFluidDemo(this);
+    }
+
     // RenderPipeline only for cards that declare postprocessing metadata
     this.renderPipeline = createRenderPipelineFor(
       this.renderer,
@@ -699,25 +903,36 @@ class ExpandedDemo {
     const backendLabel = document.getElementById('expand-backend-label');
     if (backendLabel) {
       const actual =
-        this.effect?.backend ?? (this.computeEnabled && this.backend === 'GPU' ? 'GPU' : 'CPU');
+        this.effect?.backend ??
+        (this.effect?.computeNode || (this.computeEnabled && this.backend === 'GPU')
+          ? 'GPU'
+          : 'CPU');
       backendLabel.textContent = actual;
       backendLabel.style.color = actual === 'GPU' ? '#66bb6a' : '#4fc3f7';
     }
 
     const label = document.getElementById('expand-renderer-label');
     if (label) {
+      const telemetry = this.telemetry;
       const actual = isElectricArcExample(this.data)
         ? 'ARC'
         : isTrailExample(this.data)
           ? 'TRAIL'
           : isMeshExample(this.data)
             ? 'MESH'
-            : this.effect.instance instanceof THREE.Mesh
-              ? 'INSTANCED'
-              : 'POINTS';
+            : isFluidExample(this.data)
+              ? `FLUID · ${telemetry?.solver ?? '?'} · ${
+                  telemetry
+                    ? `${telemetry.filledParticles}/${telemetry.maxParticles} pts · ${telemetry.passCount} compute + ${telemetry.screenSpacePasses} render passes`
+                    : 'n/a'
+                }`
+              : this.effect.instance instanceof THREE.Mesh
+                ? 'INSTANCED'
+                : 'POINTS';
       label.textContent = actual;
     }
 
+    if (this.disposed) return;
     this.startTime = performance.now();
     this.animate();
   }
@@ -754,6 +969,8 @@ class ExpandedDemo {
       this.renderer.setRenderTarget(null);
       this.effect.instance.visible = true;
     }
+
+    stepFluidFrame(this);
 
     renderDemoView(this);
 
@@ -804,6 +1021,10 @@ class ExpandedDemo {
     this.renderer.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    // Fluid demos keep their solver-specific framing across resizes.
+    if (isFluidExample(this.data)) {
+      frameFluidCameraFromConfig(this);
+    }
     // Resize soft particles render target
     if (this.softParticlesSetup) {
       const pixelWidth = width * this.renderer.getPixelRatio();
@@ -815,6 +1036,10 @@ class ExpandedDemo {
   dispose() {
     this.disposed = true;
     if (this.animationId) cancelAnimationFrame(this.animationId);
+    if (this.orbitControls) {
+      this.orbitControls.dispose();
+      this.orbitControls = null;
+    }
     if (this.effect) this.effect.dispose();
     this.effect = null;
     if (this.renderPipeline) this.renderPipeline.dispose?.();
@@ -822,7 +1047,12 @@ class ExpandedDemo {
     if (this.softParticlesSetup) {
       this.softParticlesSetup.renderTarget.dispose();
     }
-    if (this.renderer) this.renderer.dispose();
+    if (this.renderer) {
+      if (this.pointerHandler) {
+        this.renderer.domElement.removeEventListener('pointermove', this.pointerHandler);
+      }
+      this.renderer.dispose();
+    }
   }
 }
 
@@ -936,12 +1166,53 @@ document.getElementById('expand-copy-btn').addEventListener('click', () => {
     demo: expandExampleData.id,
   });
   const btn = document.getElementById('expand-copy-btn');
+  // Copy = pure engine config (no editor-only fields, no demo metadata).
   const json = JSON.stringify(expandExampleData.config, null, 2);
   navigator.clipboard.writeText(json).then(() => {
     btn.classList.add('copied');
     setTimeout(() => btn.classList.remove('copied'), 1500);
   });
 });
+
+/**
+ * Ready-to-run snippet: camera framing, controls and the demo metadata are
+ * represented separately from the engine config so the scene reproduces
+ * exactly (solver, box extents, pointer contract) without leaking editor-only
+ * fields into `createParticleSystem()`.
+ */
+function buildDemoSnippet(exampleData) {
+  const cfg = JSON.stringify(exampleData.config, null, 2);
+  const meta = exampleData.demo
+    ? `// demo metadata: kind=${exampleData.demo.kind} | render=${exampleData.demo.renderMode ?? '-'} | camera=${exampleData.demo.camera ?? '-'} | interaction=${JSON.stringify(exampleData.demo.interaction ?? {})}\n`
+    : '';
+  return [
+    "import * as THREE from 'three';",
+    "import { createParticleSystem, enableWebGPU } from '@cyberluke/three-particles';",
+    meta + `const config = ${cfg};`,
+    `const renderer = new THREE.WebGPURenderer({ canvas, antialias: true });`,
+    'await renderer.init();',
+    'const compute = enableWebGPU(renderer); // true = native WebGPU compute',
+    'const effect = createParticleSystem(config);',
+    'scene.add(effect.instance);',
+    '// FLUID: bind the active camera to the screen-space pass chain once',
+    'effect.bindCamera?.(camera);',
+    '// Frame from the solver box, reference orbit (Pi/4, -Pi/12):',
+    '// MLS-MPM [40,30,60] -> distance ~70 target [20,7.5,30]; SPH -> ~3.',
+    'function frame(){ const b = config.renderer.mlsMpm?.boxSize ?? [40,30,60];',
+    '  const d = Math.max(...b) * 1.15, t = [b[0]/2, b[1]/4, b[2]/2];',
+    '  const xt = Math.PI/4, yt = -Math.PI/12, f = d * Math.cos(yt);',
+    '  camera.position.set(t[0] + f*Math.sin(xt), t[1] - d*Math.sin(yt), t[2] + f*Math.cos(xt));',
+    '  camera.near = d/100; camera.far = d*10; camera.updateProjectionMatrix();',
+    '  camera.lookAt(...t); }',
+    'if (config.renderer.rendererType === "FLUID") frame();',
+    'renderer.setAnimationLoop((t) => {',
+    '  const e = t / 1000;',
+    '  effect.update({ now: t, delta: 1/60, elapsed: e });',
+    '  if (effect.computeNode) renderer.compute(effect.computeNode);',
+    '  renderer.render(scene, camera);',
+    '});',
+  ].join('\n');
+}
 
 document.getElementById('expand-download-btn').addEventListener('click', () => {
   if (!expandExampleData) return;
@@ -950,8 +1221,18 @@ document.getElementById('expand-download-btn').addEventListener('click', () => {
     event_label: 'download',
     demo: expandExampleData.id,
   });
-  const json = JSON.stringify(expandExampleData.config, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
+  // Download = { config, demo, snippet }: engine config plus the separate
+  // demo metadata needed to reproduce camera / controls / interaction.
+  const payload = JSON.stringify(
+    {
+      config: expandExampleData.config,
+      demo: expandExampleData.demo ?? null,
+      snippet: buildDemoSnippet(expandExampleData),
+    },
+    null,
+    2
+  );
+  const blob = new Blob([payload], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1123,8 +1404,18 @@ availableExamples.forEach((example) => {
       event_label: 'download',
       demo: example.id,
     });
-    const json = JSON.stringify(example.config, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
+    // Same tripartite payload as the fullscreen download: engine config +
+    // demo metadata + ready-to-run snippet.
+    const payload = JSON.stringify(
+      {
+        config: example.config,
+        demo: example.demo ?? null,
+        snippet: buildDemoSnippet(example),
+      },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1135,6 +1426,14 @@ availableExamples.forEach((example) => {
 
   card.addEventListener('click', () => startDemo(card, example));
 });
+
+// Unsupported browsers: one explicit note instead of frozen previews.
+if (!webgpuAvailable) {
+  const note = document.createElement('p');
+  note.style.cssText = 'text-align:center;color:#ef5350;font-size:0.9rem;padding:0 16px 24px;';
+  note.textContent = 'WebGPU compute required for the fluid solver cards.';
+  grid.appendChild(note);
+}
 
 // ─── Benchmark UI ───────────────────────────────────────────────────
 (async () => {
